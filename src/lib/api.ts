@@ -1,4 +1,5 @@
-import { Insumo, Recipe, Product, Transaction, Client, User } from "../types.ts";
+import { Insumo, Recipe, Product, Transaction, Client } from "../types.ts";
+import { supabase } from "./supabase.ts";
 
 const memoryStorage: Record<string, string> = {};
 
@@ -64,23 +65,11 @@ export function getBizName() {
 
 export function setBizNameLocally(name: string) {
   currentBizName = name;
-  if (isLocalMode) {
+  if (isLocalMode || currentUserId !== "local-demo-user") {
     safeStorage.setItem(`es_biz_profile_user_${currentUserId}`, name);
   }
 }
 
-// Helper to handle fetch headers
-function getHeaders() {
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
-  if (currentToken) {
-    headers["Authorization"] = `Bearer ${currentToken}`;
-  }
-  return headers;
-}
-
-// Seeding standard local demo data to make sure Local Mode is also pre-loaded
 // Seeding standard local demo data to make sure Local Mode is also pre-loaded
 function ensureLocalDemoDataSeeded() {
   const seedKey = `es_biz_is_seeded_user_${currentUserId}`;
@@ -111,8 +100,8 @@ function ensureLocalDemoDataSeeded() {
           { insumoId: 101, quantityUsed: 300, insumoName: "Harina de Trigo", insumoUnit: "g", insumoUnitCost: 15 / 15000 },
           { insumoId: 102, quantityUsed: 400, insumoName: "Dulce de Leche", insumoUnit: "g", insumoUnitCost: 40 / 8000 },
           { insumoId: 103, quantityUsed: 150, insumoName: "Mantequilla", insumoUnit: "g", insumoUnitCost: 24 / 3000 },
-          { insumoId: 104, quantityUsed: 100, insumoName: "Chocolate de Cobertura", insumoUnit: "g", insumoUnitCost: 36 / 2000 },
-          { insumoId: 105, quantityUsed: 100, insumoName: "Azúcar", insumoUnit: "g", insumoUnitCost: 10 / 10000 },
+          { id: Date.now(), insumoId: 104, quantityUsed: 100, insumoName: "Chocolate de Cobertura", insumoUnit: "g", insumoUnitCost: 36 / 2000 },
+          { id: Date.now() + 1, insumoId: 105, quantityUsed: 100, insumoName: "Azúcar", insumoUnit: "g", insumoUnitCost: 10 / 10000 },
         ]
       }
     ];
@@ -163,596 +152,724 @@ function saveLocalItems<T>(collection: string, items: T[]) {
 export const apiService = {
   // Sync after login
   async syncAuth(bizName?: string) {
-    if (isLocalMode) {
-      ensureLocalDemoDataSeeded();
-      if (bizName) setBizNameLocally(bizName);
-      return { success: true, isLocal: true };
-    }
-    const response = await fetch("/api/auth/sync", {
-      method: "POST",
-      headers: getHeaders(),
-      body: JSON.stringify({ bizName }),
-    });
-    return response.json();
+    if (bizName) setBizNameLocally(bizName);
+    ensureLocalDemoDataSeeded();
+    return { success: true, isLocal: false };
   },
 
   // Update biz profile name
   async updateProfile(bizName: string) {
-    if (isLocalMode) {
-      setBizNameLocally(bizName);
-      return { success: true, bizName };
+    setBizNameLocally(bizName);
+    if (currentUserId && currentUserId !== "local-demo-user") {
+      try {
+        await supabase.auth.updateUser({
+          data: { biz_name: bizName }
+        });
+      } catch (err) {
+        console.warn("Could not sync profile update to Supabase auth:", err);
+      }
     }
-    const response = await fetch("/api/profile", {
-      method: "POST",
-      headers: getHeaders(),
-      body: JSON.stringify({ bizName }),
-    });
-    return response.json();
+    return { success: true, bizName };
   },
 
   // Insumos
   async getInsumos(): Promise<Insumo[]> {
-    if (isLocalMode) {
-      return getLocalItems<Insumo>("insumos");
+    if (currentUserId && currentUserId !== "local-demo-user") {
+      try {
+        const { data, error } = await supabase
+          .from("insumos")
+          .select("*")
+          .eq("user_id", currentUserId)
+          .order("id", { ascending: false });
+        if (!error && data) {
+          return data as Insumo[];
+        }
+      } catch (err) {
+        console.warn("Supabase fetch failed for insumos, using local storage cache:", err);
+      }
     }
-    const response = await fetch("/api/insumos", { headers: getHeaders() });
-    return response.json();
+    return getLocalItems<Insumo>("insumos");
   },
 
   async createInsumo(data: { name: string; quantity: number; unit: string; totalCost: number }): Promise<Insumo> {
-    if (isLocalMode) {
-      const items = getLocalItems<Insumo>("insumos");
-      const unitCost = data.quantity > 0 ? data.totalCost / data.quantity : 0;
-      const newInsumo: Insumo = {
-        id: Date.now(),
-        name: data.name,
-        quantity: data.quantity,
-        unit: data.unit,
-        totalCost: data.totalCost,
-        unitCost: unitCost,
-      };
-      items.unshift(newInsumo);
-      saveLocalItems("insumos", items);
+    const unitCost = data.quantity > 0 ? data.totalCost / data.quantity : 0;
+    const newInsumo: Insumo = {
+      id: Date.now(),
+      name: data.name,
+      quantity: data.quantity,
+      unit: data.unit,
+      totalCost: data.totalCost,
+      unitCost: unitCost,
+    };
 
-      // Log purchase movement offline
-      if (data.totalCost > 0) {
-        const txs = getLocalItems<Transaction>("transactions");
-        txs.unshift({
-          id: Date.now() + 1,
-          type: "purchase",
-          amount: -data.totalCost,
-          description: `Compra de Materia Prima: ${data.quantity}${data.unit} de ${data.name}`,
-          date: new Date().toISOString().split("T")[0],
-        });
-        saveLocalItems("transactions", txs);
+    if (currentUserId && currentUserId !== "local-demo-user") {
+      try {
+        const { data: inserted, error } = await supabase
+          .from("insumos")
+          .insert([{ ...newInsumo, user_id: currentUserId }])
+          .select()
+          .single();
+        if (!error && inserted) {
+          const items = getLocalItems<Insumo>("insumos");
+          items.unshift(inserted);
+          saveLocalItems("insumos", items);
+          return inserted as Insumo;
+        }
+      } catch (err) {
+        console.warn("Supabase create failed for insumos, saving locally:", err);
       }
-
-      return newInsumo;
     }
 
-    const response = await fetch("/api/insumos", {
-      method: "POST",
-      headers: getHeaders(),
-      body: JSON.stringify(data),
-    });
-    return response.json();
+    const items = getLocalItems<Insumo>("insumos");
+    items.unshift(newInsumo);
+    saveLocalItems("insumos", items);
+
+    // Log purchase movement offline/locally
+    if (data.totalCost > 0) {
+      await this.createTransaction({
+        type: "purchase",
+        amount: -data.totalCost,
+        description: `Compra de Materia Prima: ${data.quantity}${data.unit} de ${data.name}`,
+        date: new Date().toISOString().split("T")[0],
+      });
+    }
+
+    return newInsumo;
   },
 
   async updateInsumo(id: number, data: { name: string; quantity: number; unit: string; totalCost: number }): Promise<Insumo> {
-    if (isLocalMode) {
-      const items = getLocalItems<Insumo>("insumos");
-      const idx = items.findIndex(i => i.id === id);
-      if (idx !== -1) {
-        const unitCost = data.quantity > 0 ? data.totalCost / data.quantity : 0;
-        items[idx] = {
-          ...items[idx],
-          name: data.name,
-          quantity: data.quantity,
-          unit: data.unit,
-          totalCost: data.totalCost,
-          unitCost: unitCost,
-        };
-        saveLocalItems("insumos", items);
-        return items[idx];
+    const unitCost = data.quantity > 0 ? data.totalCost / data.quantity : 0;
+    const updates = {
+      name: data.name,
+      quantity: data.quantity,
+      unit: data.unit,
+      totalCost: data.totalCost,
+      unitCost: unitCost,
+    };
+
+    if (currentUserId && currentUserId !== "local-demo-user") {
+      try {
+        const { data: updated, error } = await supabase
+          .from("insumos")
+          .update(updates)
+          .eq("id", id)
+          .eq("user_id", currentUserId)
+          .select()
+          .single();
+        if (!error && updated) {
+          const items = getLocalItems<Insumo>("insumos");
+          const idx = items.findIndex(i => i.id === id);
+          if (idx !== -1) {
+            items[idx] = updated;
+            saveLocalItems("insumos", items);
+          }
+          return updated as Insumo;
+        }
+      } catch (err) {
+        console.warn("Supabase update failed for insumos, saving locally:", err);
       }
-      throw new Error("Not found");
     }
 
-    const response = await fetch(`/api/insumos/${id}`, {
-      method: "PUT",
-      headers: getHeaders(),
-      body: JSON.stringify(data),
-    });
-    return response.json();
+    const items = getLocalItems<Insumo>("insumos");
+    const idx = items.findIndex(i => i.id === id);
+    if (idx !== -1) {
+      items[idx] = {
+        ...items[idx],
+        ...updates,
+      };
+      saveLocalItems("insumos", items);
+      return items[idx];
+    }
+    throw new Error("Materia prima no encontrada");
   },
 
   async deleteInsumo(id: number): Promise<{ success: boolean }> {
-    if (isLocalMode) {
-      // Check if ingredient is used in local recipes
-      const recs = getLocalItems<Recipe>("recipes");
-      const isUsed = recs.some(r => r.ingredients.some(ing => ing.insumoId === id));
-      if (isUsed) {
-        throw new Error("No se puede eliminar porque está referenciado en una receta activa.");
+    // Check if ingredient is used in active recipes (local verification)
+    const recs = getLocalItems<Recipe>("recipes");
+    const isUsed = recs.some(r => r.ingredients.some(ing => ing.insumoId === id));
+    if (isUsed) {
+      throw new Error("No se puede eliminar porque está referenciado en una receta activa.");
+    }
+
+    if (currentUserId && currentUserId !== "local-demo-user") {
+      try {
+        const { error } = await supabase
+          .from("insumos")
+          .delete()
+          .eq("id", id)
+          .eq("user_id", currentUserId);
+        if (!error) {
+          let items = getLocalItems<Insumo>("insumos");
+          items = items.filter(i => i.id !== id);
+          saveLocalItems("insumos", items);
+          return { success: true };
+        }
+      } catch (err) {
+        console.warn("Supabase delete failed for insumos, removing locally:", err);
       }
-
-      let items = getLocalItems<Insumo>("insumos");
-      items = items.filter(i => i.id !== id);
-      saveLocalItems("insumos", items);
-      return { success: true };
     }
 
-    const response = await fetch(`/api/insumos/${id}`, {
-      method: "DELETE",
-      headers: getHeaders(),
-    });
-    const res = await response.json();
-    if (response.status >= 400) {
-      throw new Error(res.error || "Fallo al eliminar");
-    }
-    return res;
+    let items = getLocalItems<Insumo>("insumos");
+    items = items.filter(i => i.id !== id);
+    saveLocalItems("insumos", items);
+    return { success: true };
   },
 
   // Recipes
   async getRecipes(): Promise<Recipe[]> {
-    if (isLocalMode) {
-      return getLocalItems<Recipe>("recipes");
+    if (currentUserId && currentUserId !== "local-demo-user") {
+      try {
+        const { data, error } = await supabase
+          .from("recipes")
+          .select("*")
+          .eq("user_id", currentUserId)
+          .order("id", { ascending: false });
+        if (!error && data) {
+          return data as Recipe[];
+        }
+      } catch (err) {
+        console.warn("Supabase fetch failed for recipes, returning local storage:", err);
+      }
     }
-    const response = await fetch("/api/recipes", { headers: getHeaders() });
-    return response.json();
+    return getLocalItems<Recipe>("recipes");
   },
 
   async createRecipe(data: { name: string; yield: number; marginPercent: number; ingredients: any[] }): Promise<Recipe> {
-    if (isLocalMode) {
-      const recs = getLocalItems<Recipe>("recipes");
-      const insList = getLocalItems<Insumo>("insumos");
+    const insList = getLocalItems<Insumo>("insumos");
 
-      let totalCostOfIngredients = 0;
-      const ingredientsWithMeta = data.ingredients.map(ing => {
-        const ins = insList.find(i => i.id === ing.insumoId);
-        const insCost = ins ? ins.unitCost : 0;
-        totalCostOfIngredients += insCost * ing.quantityUsed;
-        return {
-          ...ing,
-          insumoName: ins ? ins.name : "Insumo",
-          insumoUnit: ins ? ins.unit : "unidades",
-          insumoUnitCost: insCost,
-        };
-      });
-
-      const costPerPiece = data.yield > 0 ? totalCostOfIngredients / data.yield : 0;
-      const suggestedPrice = costPerPiece * (1 + data.marginPercent / 100);
-
-      const newRecipe: Recipe = {
-        id: Date.now(),
-        name: data.name,
-        yield: data.yield,
-        marginPercent: data.marginPercent,
-        costPerPiece,
-        suggestedPrice,
-        ingredients: ingredientsWithMeta,
+    let totalCostOfIngredients = 0;
+    const ingredientsWithMeta = data.ingredients.map(ing => {
+      const ins = insList.find(i => i.id === ing.insumoId);
+      const insCost = ins ? ins.unitCost : 0;
+      totalCostOfIngredients += insCost * ing.quantityUsed;
+      return {
+        ...ing,
+        insumoName: ins ? ins.name : "Insumo",
+        insumoUnit: ins ? ins.unit : "unidades",
+        insumoUnitCost: insCost,
       };
+    });
 
-      recs.unshift(newRecipe);
-      saveLocalItems("recipes", recs);
+    const costPerPiece = data.yield > 0 ? totalCostOfIngredients / data.yield : 0;
+    const suggestedPrice = costPerPiece * (1 + data.marginPercent / 100);
 
-      // Register or update product catalog
-      const prods = getLocalItems<Product>("products");
-      const existingProduct = prods.find(p => p.name.toLowerCase() === data.name.toLowerCase());
-      if (!existingProduct) {
-        prods.unshift({
-          id: Date.now() + 10,
-          recipeId: newRecipe.id,
-          name: data.name,
-          stock: 0,
-          price: parseFloat(suggestedPrice.toFixed(2)),
-          cost: costPerPiece,
-        });
-        saveLocalItems("products", prods);
+    const newRecipe: Recipe = {
+      id: Date.now(),
+      name: data.name,
+      yield: data.yield,
+      marginPercent: data.marginPercent,
+      costPerPiece,
+      suggestedPrice,
+      ingredients: ingredientsWithMeta,
+    };
+
+    if (currentUserId && currentUserId !== "local-demo-user") {
+      try {
+        const { data: inserted, error } = await supabase
+          .from("recipes")
+          .insert([{ ...newRecipe, user_id: currentUserId }])
+          .select()
+          .single();
+        if (!error && inserted) {
+          const recs = getLocalItems<Recipe>("recipes");
+          recs.unshift(inserted);
+          saveLocalItems("recipes", recs);
+          
+          // Also register product in Supabase & locally
+          await this.createProduct({
+            name: data.name,
+            stock: 0,
+            price: parseFloat(suggestedPrice.toFixed(2)),
+            cost: costPerPiece,
+            recipeId: inserted.id
+          });
+
+          return inserted as Recipe;
+        }
+      } catch (err) {
+        console.warn("Supabase recipe create failed, fall back to local:", err);
       }
-
-      return newRecipe;
     }
 
-    const response = await fetch("/api/recipes", {
-      method: "POST",
-      headers: getHeaders(),
-      body: JSON.stringify(data),
-    });
-    return response.json();
+    const recs = getLocalItems<Recipe>("recipes");
+    recs.unshift(newRecipe);
+    saveLocalItems("recipes", recs);
+
+    // Register or update product catalog locally
+    const prods = getLocalItems<Product>("products");
+    const existingProduct = prods.find(p => p.name.toLowerCase() === data.name.toLowerCase());
+    if (!existingProduct) {
+      prods.unshift({
+        id: Date.now() + 10,
+        recipeId: newRecipe.id,
+        name: data.name,
+        stock: 0,
+        price: parseFloat(suggestedPrice.toFixed(2)),
+        cost: costPerPiece,
+      });
+      saveLocalItems("products", prods);
+    }
+
+    return newRecipe;
   },
 
   async deleteRecipe(id: number): Promise<{ success: boolean }> {
-    if (isLocalMode) {
-      let recs = getLocalItems<Recipe>("recipes");
-      recs = recs.filter(r => r.id !== id);
-      saveLocalItems("recipes", recs);
-      return { success: true };
+    if (currentUserId && currentUserId !== "local-demo-user") {
+      try {
+        const { error } = await supabase
+          .from("recipes")
+          .delete()
+          .eq("id", id)
+          .eq("user_id", currentUserId);
+        if (!error) {
+          let recs = getLocalItems<Recipe>("recipes");
+          recs = recs.filter(r => r.id !== id);
+          saveLocalItems("recipes", recs);
+          return { success: true };
+        }
+      } catch (err) {
+        console.warn("Supabase recipe delete failed, removing locally:", err);
+      }
     }
 
-    const response = await fetch(`/api/recipes/${id}`, {
-      method: "DELETE",
-      headers: getHeaders(),
-    });
-    return response.json();
+    let recs = getLocalItems<Recipe>("recipes");
+    recs = recs.filter(r => r.id !== id);
+    saveLocalItems("recipes", recs);
+    return { success: true };
   },
 
   // Products
   async getProducts(): Promise<Product[]> {
-    if (isLocalMode) {
-      return getLocalItems<Product>("products");
+    if (currentUserId && currentUserId !== "local-demo-user") {
+      try {
+        const { data, error } = await supabase
+          .from("products")
+          .select("*")
+          .eq("user_id", currentUserId)
+          .order("id", { ascending: false });
+        if (!error && data) {
+          return data as Product[];
+        }
+      } catch (err) {
+        console.warn("Supabase fetch failed for products, returning local storage:", err);
+      }
     }
-    const response = await fetch("/api/products", { headers: getHeaders() });
-    return response.json();
+    return getLocalItems<Product>("products");
   },
 
-  async createProduct(data: { name: string; stock: number; price: number; cost: number }): Promise<Product> {
-    if (isLocalMode) {
-      const prods = getLocalItems<Product>("products");
-      const newProduct: Product = {
-        id: Date.now(),
-        recipeId: null,
-        name: data.name,
-        stock: data.stock,
-        price: data.price,
-        cost: data.cost,
-      };
-      prods.unshift(newProduct);
-      saveLocalItems("products", prods);
-      return newProduct;
+  async createProduct(data: { name: string; stock: number; price: number; cost: number; recipeId?: number | null }): Promise<Product> {
+    const newProduct: Product = {
+      id: Date.now(),
+      recipeId: data.recipeId || null,
+      name: data.name,
+      stock: data.stock,
+      price: data.price,
+      cost: data.cost,
+    };
+
+    if (currentUserId && currentUserId !== "local-demo-user") {
+      try {
+        const { data: inserted, error } = await supabase
+          .from("products")
+          .insert([{ ...newProduct, user_id: currentUserId }])
+          .select()
+          .single();
+        if (!error && inserted) {
+          const prods = getLocalItems<Product>("products");
+          prods.unshift(inserted);
+          saveLocalItems("products", prods);
+          return inserted as Product;
+        }
+      } catch (err) {
+        console.warn("Supabase product create failed, saving locally:", err);
+      }
     }
 
-    const response = await fetch("/api/products", {
-      method: "POST",
-      headers: getHeaders(),
-      body: JSON.stringify(data),
-    });
-    return response.json();
+    const prods = getLocalItems<Product>("products");
+    prods.unshift(newProduct);
+    saveLocalItems("products", prods);
+    return newProduct;
   },
 
   async updateProduct(id: number, data: { name?: string; stock?: number; price?: number; cost?: number }): Promise<Product> {
-    if (isLocalMode) {
-      const prods = getLocalItems<Product>("products");
-      const idx = prods.findIndex(p => p.id === id);
-      if (idx !== -1) {
-        prods[idx] = {
-          ...prods[idx],
-          ...data,
-        } as Product;
-        saveLocalItems("products", prods);
-        return prods[idx];
+    if (currentUserId && currentUserId !== "local-demo-user") {
+      try {
+        const { data: updated, error } = await supabase
+          .from("products")
+          .update(data)
+          .eq("id", id)
+          .eq("user_id", currentUserId)
+          .select()
+          .single();
+        if (!error && updated) {
+          const prods = getLocalItems<Product>("products");
+          const idx = prods.findIndex(p => p.id === id);
+          if (idx !== -1) {
+            prods[idx] = updated;
+            saveLocalItems("products", prods);
+          }
+          return updated as Product;
+        }
+      } catch (err) {
+        console.warn("Supabase product update failed, updating locally:", err);
       }
-      throw new Error("Product not found");
     }
 
-    const response = await fetch(`/api/products/${id}`, {
-      method: "PUT",
-      headers: getHeaders(),
-      body: JSON.stringify(data),
-    });
-    return response.json();
+    const prods = getLocalItems<Product>("products");
+    const idx = prods.findIndex(p => p.id === id);
+    if (idx !== -1) {
+      prods[idx] = {
+        ...prods[idx],
+        ...data,
+      } as Product;
+      saveLocalItems("products", prods);
+      return prods[idx];
+    }
+    throw new Error("Product not found");
   },
 
   async updateProductStockDelta(id: number, delta: number): Promise<Product> {
-    if (isLocalMode) {
-      const prods = getLocalItems<Product>("products");
-      const idx = prods.findIndex(p => p.id === id);
-      if (idx !== -1) {
-        prods[idx].stock = prods[idx].stock + delta;
-        saveLocalItems("products", prods);
-        return prods[idx];
-      }
-      throw new Error("Product not found");
-    }
+    const prods = getLocalItems<Product>("products");
+    const idx = prods.findIndex(p => p.id === id);
+    if (idx === -1) throw new Error("Producto no encontrado");
 
-    const response = await fetch(`/api/products/${id}/stock`, {
-      method: "PUT",
-      headers: getHeaders(),
-      body: JSON.stringify({ delta }),
-    });
-    return response.json();
+    const newStock = prods[idx].stock + delta;
+    return this.updateProduct(id, { stock: newStock });
   },
 
   async deleteProduct(id: number): Promise<{ success: boolean }> {
-    if (isLocalMode) {
-      let prods = getLocalItems<Product>("products");
-      prods = prods.filter(p => p.id !== id);
-      saveLocalItems("products", prods);
-      return { success: true };
+    if (currentUserId && currentUserId !== "local-demo-user") {
+      try {
+        const { error } = await supabase
+          .from("products")
+          .delete()
+          .eq("id", id)
+          .eq("user_id", currentUserId);
+        if (!error) {
+          let prods = getLocalItems<Product>("products");
+          prods = prods.filter(p => p.id !== id);
+          saveLocalItems("products", prods);
+          return { success: true };
+        }
+      } catch (err) {
+        console.warn("Supabase product delete failed, removing locally:", err);
+      }
     }
 
-    const response = await fetch(`/api/products/${id}`, {
-      method: "DELETE",
-      headers: getHeaders(),
-    });
-    return response.json();
+    let prods = getLocalItems<Product>("products");
+    prods = prods.filter(p => p.id !== id);
+    saveLocalItems("products", prods);
+    return { success: true };
   },
 
   // Fabricar Tanda (Taller Production)
   async executeFabricacion(recipeId: number, batches: number): Promise<any> {
-    if (isLocalMode) {
-      const recs = getLocalItems<Recipe>("recipes");
-      const insList = getLocalItems<Insumo>("insumos");
-      const prods = getLocalItems<Product>("products");
+    const recs = getLocalItems<Recipe>("recipes");
+    const insList = getLocalItems<Insumo>("insumos");
+    const prods = getLocalItems<Product>("products");
 
-      const recipe = recs.find(r => r.id === recipeId);
-      if (!recipe) throw new Error("Receta no encontrada");
+    const recipe = recs.find(r => r.id === recipeId);
+    if (!recipe) throw new Error("Receta no encontrada");
 
-      // Verify availability
-      const missing: string[] = [];
-      const insumoUpdates: { id: number; required: number; has: number; name: string }[] = [];
+    // Verify availability
+    const missing: string[] = [];
+    const insumoUpdates: { id: number; required: number; has: number; name: string }[] = [];
 
-      recipe.ingredients.forEach(ing => {
-        const ins = insList.find(i => i.id === ing.insumoId);
-        if (!ins) throw new Error("Materia prima no encontrada.");
+    recipe.ingredients.forEach(ing => {
+      const ins = insList.find(i => i.id === ing.insumoId);
+      if (!ins) throw new Error("Materia prima no encontrada.");
 
-        const required = ing.quantityUsed * batches;
-        if (ins.quantity < required) {
-          missing.push(`${ins.name}: Requieres ${required}${ins.unit}, tienes ${ins.quantity}${ins.unit}`);
-        } else {
-          insumoUpdates.push({ id: ins.id, required, has: ins.quantity, name: ins.name });
-        }
-      });
-
-      if (missing.length > 0) {
-        throw new Error("Insumos insuficientes:\n" + missing.join("\n"));
-      }
-
-      // Deduct ingredients
-      insumoUpdates.forEach(update => {
-        const ins = insList.find(i => i.id === update.id)!;
-        ins.quantity = update.has - update.required;
-      });
-      saveLocalItems("insumos", insList);
-
-      // Increase products stock
-      const finalQtyProduced = recipe.yield * batches;
-      let targetProduct = prods.find(p => p.recipeId === recipe.id);
-      if (!targetProduct) {
-        // Find by name
-        targetProduct = prods.find(p => p.name.toLowerCase() === recipe.name.toLowerCase());
-      }
-
-      if (targetProduct) {
-        targetProduct.stock += finalQtyProduced;
-        targetProduct.cost = recipe.costPerPiece;
+      const required = ing.quantityUsed * batches;
+      if (ins.quantity < required) {
+        missing.push(`${ins.name}: Requieres ${required}${ins.unit}, tienes ${ins.quantity}${ins.unit}`);
       } else {
-        targetProduct = {
-          id: Date.now(),
-          recipeId: recipe.id,
-          name: recipe.name,
-          stock: finalQtyProduced,
-          price: parseFloat(recipe.suggestedPrice.toFixed(2)),
-          cost: recipe.costPerPiece,
-        };
-        prods.unshift(targetProduct);
+        insumoUpdates.push({ id: ins.id, required, has: ins.quantity, name: ins.name });
       }
-      saveLocalItems("products", prods);
-
-      // Log transaction
-      const txs = getLocalItems<Transaction>("transactions");
-      txs.unshift({
-        id: Date.now(),
-        type: "expense",
-        amount: 0,
-        description: `Fabricación Taller: ${batches} tanda(s) de ${recipe.name} (+${finalQtyProduced} unidades fabricadas)`,
-        date: new Date().toISOString().split("T")[0],
-      });
-      saveLocalItems("transactions", txs);
-
-      return {
-        success: true,
-        batchesManufactured: batches,
-        qtyProduced: finalQtyProduced,
-        product: targetProduct,
-      };
-    }
-
-    const response = await fetch("/api/fabricacion", {
-      method: "POST",
-      headers: getHeaders(),
-      body: JSON.stringify({ recipeId, batches }),
     });
 
-    const res = await response.json();
-    if (response.status >= 400) {
-      throw new Error(res.error || "Fallo en taller de fabricación");
+    if (missing.length > 0) {
+      throw new Error("Insumos insuficientes:\n" + missing.join("\n"));
     }
-    return res;
+
+    // Process local ingredient deduction
+    for (const update of insumoUpdates) {
+      await this.updateInsumo(update.id, {
+        name: update.name,
+        quantity: update.has - update.required,
+        unit: insList.find(i => i.id === update.id)!.unit,
+        totalCost: insList.find(i => i.id === update.id)!.totalCost
+      });
+    }
+
+    // Increase products stock
+    const finalQtyProduced = recipe.yield * batches;
+    let targetProduct = prods.find(p => p.recipeId === recipe.id);
+    if (!targetProduct) {
+      targetProduct = prods.find(p => p.name.toLowerCase() === recipe.name.toLowerCase());
+    }
+
+    if (targetProduct) {
+      await this.updateProduct(targetProduct.id, {
+        stock: targetProduct.stock + finalQtyProduced,
+        cost: recipe.costPerPiece
+      });
+    } else {
+      targetProduct = await this.createProduct({
+        recipeId: recipe.id,
+        name: recipe.name,
+        stock: finalQtyProduced,
+        price: parseFloat(recipe.suggestedPrice.toFixed(2)),
+        cost: recipe.costPerPiece,
+      });
+    }
+
+    // Log transaction movement
+    const loggedTx = await this.createTransaction({
+      type: "expense",
+      amount: 0,
+      description: `Fabricación Taller: ${batches} tanda(s) de ${recipe.name} (+${finalQtyProduced} unidades fabricadas)`,
+      date: new Date().toISOString().split("T")[0],
+    });
+
+    return {
+      success: true,
+      batchesManufactured: batches,
+      qtyProduced: finalQtyProduced,
+      product: targetProduct,
+      transaction: loggedTx
+    };
   },
 
   // Transactions Ledger
   async getTransactions(): Promise<Transaction[]> {
-    if (isLocalMode) {
-      return getLocalItems<Transaction>("transactions");
+    if (currentUserId && currentUserId !== "local-demo-user") {
+      try {
+        const { data, error } = await supabase
+          .from("transactions")
+          .select("*")
+          .eq("user_id", currentUserId)
+          .order("id", { ascending: false });
+        if (!error && data) {
+          return data as Transaction[];
+        }
+      } catch (err) {
+        console.warn("Supabase fetch failed for transactions, returning local cache:", err);
+      }
     }
-    const response = await fetch("/api/transactions", { headers: getHeaders() });
-    return response.json();
+    return getLocalItems<Transaction>("transactions");
   },
 
   async createTransaction(data: { type: string; amount: number; description: string; date?: string }): Promise<Transaction> {
-    if (isLocalMode) {
-      const txs = getLocalItems<Transaction>("transactions");
-      const newTx: Transaction = {
-        id: Date.now(),
-        type: data.type as any,
-        amount: data.amount,
-        description: data.description,
-        date: data.date || new Date().toISOString().split("T")[0],
-      };
-      txs.unshift(newTx);
-      saveLocalItems("transactions", txs);
-      return newTx;
+    const newTx: Transaction = {
+      id: Date.now(),
+      type: data.type as any,
+      amount: data.amount,
+      description: data.description,
+      date: data.date || new Date().toISOString().split("T")[0],
+    };
+
+    if (currentUserId && currentUserId !== "local-demo-user") {
+      try {
+        const { data: inserted, error } = await supabase
+          .from("transactions")
+          .insert([{ ...newTx, user_id: currentUserId }])
+          .select()
+          .single();
+        if (!error && inserted) {
+          const txs = getLocalItems<Transaction>("transactions");
+          txs.unshift(inserted);
+          saveLocalItems("transactions", txs);
+          return inserted as Transaction;
+        }
+      } catch (err) {
+        console.warn("Supabase transaction save failed, logging locally:", err);
+      }
     }
 
-    const response = await fetch("/api/transactions", {
-      method: "POST",
-      headers: getHeaders(),
-      body: JSON.stringify(data),
-    });
-    return response.json();
+    const txs = getLocalItems<Transaction>("transactions");
+    txs.unshift(newTx);
+    saveLocalItems("transactions", txs);
+    return newTx;
   },
 
   async checkoutCart(items: { productId: number; qty: number }[], clientName?: string): Promise<any> {
-    if (isLocalMode) {
-      const prods = getLocalItems<Product>("products");
-      let totalSaleRevenue = 0;
-      const salesDescriptions: string[] = [];
+    const prods = getLocalItems<Product>("products");
+    let totalSaleRevenue = 0;
+    const salesDescriptions: string[] = [];
 
-      items.forEach(item => {
-        const prod = prods.find(p => p.id === item.productId);
-        if (!prod) throw new Error("Producto no encontrado");
+    for (const item of items) {
+      const prod = prods.find(p => p.id === item.productId);
+      if (!prod) throw new Error("Producto no encontrado");
 
-        prod.stock -= item.qty; // Support negative transient stock
-        const itemRevenue = prod.price * item.qty;
-        totalSaleRevenue += itemRevenue;
-        salesDescriptions.push(`${item.qty}x ${prod.name}`);
+      await this.updateProduct(prod.id, {
+        stock: prod.stock - item.qty
       });
-      saveLocalItems("products", prods);
-
-      // Log movement
-      const description = `Venta Caja: ${salesDescriptions.join(", ")}` + (clientName ? ` (Cliente: ${clientName})` : "");
-      const txs = getLocalItems<Transaction>("transactions");
-      const newTx: Transaction = {
-        id: Date.now(),
-        type: "sale",
-        amount: totalSaleRevenue,
-        description,
-        date: new Date().toISOString().split("T")[0],
-      };
-      txs.unshift(newTx);
-      saveLocalItems("transactions", txs);
-
-      return { success: true, revenue: totalSaleRevenue, transaction: newTx };
+      
+      const itemRevenue = prod.price * item.qty;
+      totalSaleRevenue += itemRevenue;
+      salesDescriptions.push(`${item.qty}x ${prod.name}`);
     }
 
-    const response = await fetch("/api/checkout", {
-      method: "POST",
-      headers: getHeaders(),
-      body: JSON.stringify({ items, clientName }),
+    // Log movement
+    const description = `Venta Caja: ${salesDescriptions.join(", ")}` + (clientName ? ` (Cliente: ${clientName})` : "");
+    const loggedTx = await this.createTransaction({
+      type: "sale",
+      amount: totalSaleRevenue,
+      description,
+      date: new Date().toISOString().split("T")[0],
     });
 
-    const res = await response.json();
-    if (response.status >= 400) {
-      throw new Error(res.error || "Fallo en caja de venta");
-    }
-    return res;
+    return { success: true, revenue: totalSaleRevenue, transaction: loggedTx };
   },
 
   async resetDatabase(mode: "clear" | "reset" = "reset"): Promise<{ success: boolean }> {
-    if (isLocalMode) {
-      // Clear localStorage specific tables and re-seed
-      safeStorage.removeItem(`es_biz_insumos_user_${currentUserId}`);
-      safeStorage.removeItem(`es_biz_recipes_user_${currentUserId}`);
-      safeStorage.removeItem(`es_biz_products_user_${currentUserId}`);
-      safeStorage.removeItem(`es_biz_transactions_user_${currentUserId}`);
-      safeStorage.removeItem(`es_biz_clients_user_${currentUserId}`);
-      safeStorage.removeItem(`es_biz_profile_user_${currentUserId}`);
+    // Clear localStorage specific tables for active user
+    safeStorage.removeItem(`es_biz_insumos_user_${currentUserId}`);
+    safeStorage.removeItem(`es_biz_recipes_user_${currentUserId}`);
+    safeStorage.removeItem(`es_biz_products_user_${currentUserId}`);
+    safeStorage.removeItem(`es_biz_transactions_user_${currentUserId}`);
+    safeStorage.removeItem(`es_biz_clients_user_${currentUserId}`);
+    safeStorage.removeItem(`es_biz_profile_user_${currentUserId}`);
 
-      if (mode === "clear") {
-        safeStorage.setItem(`es_biz_is_seeded_user_${currentUserId}`, "true");
-      } else {
-        safeStorage.removeItem(`es_biz_is_seeded_user_${currentUserId}`);
-        ensureLocalDemoDataSeeded();
+    if (currentUserId && currentUserId !== "local-demo-user") {
+      try {
+        // Attempt to clean remote tables in Supabase
+        await supabase.from("transactions").delete().eq("user_id", currentUserId);
+        await supabase.from("products").delete().eq("user_id", currentUserId);
+        await supabase.from("recipes").delete().eq("user_id", currentUserId);
+        await supabase.from("insumos").delete().eq("user_id", currentUserId);
+        await supabase.from("clients").delete().eq("user_id", currentUserId);
+      } catch (err) {
+        console.warn("Could not wipe remote Supabase tables:", err);
       }
-      return { success: true };
     }
 
-    const response = await fetch("/api/transactions/reset", {
-      method: "POST",
-      headers: getHeaders(),
-      body: JSON.stringify({ mode }),
-    });
-    return response.json();
+    if (mode === "clear") {
+      safeStorage.setItem(`es_biz_is_seeded_user_${currentUserId}`, "true");
+    } else {
+      safeStorage.removeItem(`es_biz_is_seeded_user_${currentUserId}`);
+      ensureLocalDemoDataSeeded();
+    }
+    return { success: true };
   },
 
   // Clients
   async getClients(): Promise<Client[]> {
-    if (isLocalMode) {
-      return getLocalItems<Client>("clients");
+    if (currentUserId && currentUserId !== "local-demo-user") {
+      try {
+        const { data, error } = await supabase
+          .from("clients")
+          .select("*")
+          .eq("user_id", currentUserId)
+          .order("id", { ascending: false });
+        if (!error && data) {
+          return data as Client[];
+        }
+      } catch (err) {
+        console.warn("Supabase fetch failed for clients, returning local cache:", err);
+      }
     }
-    const response = await fetch("/api/clients", { headers: getHeaders() });
-    return response.json();
+    return getLocalItems<Client>("clients");
   },
 
   async createClient(data: { name: string; phone?: string; email?: string; lat?: number; lng?: number }): Promise<Client> {
-    if (isLocalMode) {
-      const list = getLocalItems<Client>("clients");
-      const newClient: Client = {
-        id: Date.now(),
-        name: data.name,
-        phone: data.phone || null,
-        email: data.email || null,
-        lat: data.lat || null,
-        lng: data.lng || null,
-      };
-      list.unshift(newClient);
-      saveLocalItems("clients", list);
-      return newClient;
+    const newClient: Client = {
+      id: Date.now(),
+      name: data.name,
+      phone: data.phone || null,
+      email: data.email || null,
+      lat: data.lat || null,
+      lng: data.lng || null,
+    };
+
+    if (currentUserId && currentUserId !== "local-demo-user") {
+      try {
+        const { data: inserted, error } = await supabase
+          .from("clients")
+          .insert([{ ...newClient, user_id: currentUserId }])
+          .select()
+          .single();
+        if (!error && inserted) {
+          const list = getLocalItems<Client>("clients");
+          list.unshift(inserted);
+          saveLocalItems("clients", list);
+          return inserted as Client;
+        }
+      } catch (err) {
+        console.warn("Supabase client create failed, saving locally:", err);
+      }
     }
 
-    const response = await fetch("/api/clients", {
-      method: "POST",
-      headers: getHeaders(),
-      body: JSON.stringify(data),
-    });
-    return response.json();
+    const list = getLocalItems<Client>("clients");
+    list.unshift(newClient);
+    saveLocalItems("clients", list);
+    return newClient;
   },
 
   async deleteClient(id: number): Promise<{ success: boolean }> {
-    if (isLocalMode) {
-      let list = getLocalItems<Client>("clients");
-      list = list.filter(c => c.id !== id);
-      saveLocalItems("clients", list);
-      return { success: true };
+    if (currentUserId && currentUserId !== "local-demo-user") {
+      try {
+        const { error } = await supabase
+          .from("clients")
+          .delete()
+          .eq("id", id)
+          .eq("user_id", currentUserId);
+        if (!error) {
+          let list = getLocalItems<Client>("clients");
+          list = list.filter(c => c.id !== id);
+          saveLocalItems("clients", list);
+          return { success: true };
+        }
+      } catch (err) {
+        console.warn("Supabase client delete failed, removing locally:", err);
+      }
     }
 
-    const response = await fetch(`/api/clients/${id}`, {
-      method: "DELETE",
-      headers: getHeaders(),
-    });
-    return response.json();
+    let list = getLocalItems<Client>("clients");
+    list = list.filter(c => c.id !== id);
+    saveLocalItems("clients", list);
+    return { success: true };
   },
 
   // AI Assistant advice
   async askAiAdvisor(prompt: string): Promise<string> {
-    if (isLocalMode) {
-      // Offline fallback smart tips simulator using a standard lovely financial analysis
-      const insList = getLocalItems<Insumo>("insumos");
-      const prods = getLocalItems<Product>("products");
-      const lowStockList = insList.filter(i => i.quantity < 1000).map(i => i.name);
-      
-      let tips = `**[MODO LOCAL SEGURO OFFLINE]**\n\n¡Hola! Como estás operando en el modo local seguro de FinanzasPro, he analizado tus datos actuales en el navegador:\n\n`;
-      if (lowStockList.length > 0) {
-        tips += `⚠️ **Alerta de Stock Crítico:** Tienes bajo stock de materia prima en: *${lowStockList.join(", ")}*. Sería aconsejable reponer antes de iniciar la próxima tanda de producción en el taller.\n\n`;
-      } else {
-        tips += `✅ **Inventario Estable:** Tus materias primas cargadas en tu despensa tienen buenos niveles de stock.\n\n`;
-      }
-
-      const lowMarginProds = prods.filter(p => p.price < p.cost * 1.5);
-      if (lowMarginProds.length > 0) {
-        tips += `📈 **Oportunidad de Margen:** Tus productos *${lowMarginProds.map(p => p.name).join(", ")}* tienen márgenes de ganancia menores al 50%. Te recomiendo recalcular tus recetas en el taller o ajustar su precio de venta sugerido.\n\n`;
-      } else {
-        tips += `🌟 **Márgenes de Excelencia:** Tu catálogo actual de ventas posee excelentes márgenes de rentabilidad sobre costo (+150% promedio).\n\n`;
-      }
-
-      tips += `Recuerda conectar tu cuenta de Google para activar el análisis predictivo por Inteligencia Artificial (Gemini AI) y guardar tus registros en la base de datos segura en la nube de PostgreSQL.`;
-      return tips;
-    }
-
+    // If online, can fall back to custom server assistant or direct smart analysis
     try {
       const response = await fetch("/api/assistant", {
         method: "POST",
-        headers: getHeaders(),
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${currentToken}`
+        },
         body: JSON.stringify({ prompt }),
       });
       const data = await response.json();
-      if (data.error) {
-        throw new Error(data.error);
+      if (!data.error && data.response) {
+        return data.response;
       }
-      return data.response;
-    } catch (err: any) {
-      console.error("AI request error:", err);
-      return "El asesor financiero inteligente (Gemini) no está disponible temporalmente. Por favor asegúrate de haber cargado una API Key de Gemini en el panel lateral de AI Studio (Secrets) o utiliza el simulador local de consejos.";
+    } catch (e) {
+      // Offline fallback smart tips simulator using financial analysis
     }
+
+    const insList = getLocalItems<Insumo>("insumos");
+    const prods = getLocalItems<Product>("products");
+    const lowStockList = insList.filter(i => i.quantity < 1000).map(i => i.name);
+    
+    let tips = `**[MODO MULTIUSUARIO SUPABASE]**\n\n¡Hola! Como estás operando desde tu cuenta multiusuario, he analizado tus datos actuales en el navegador:\n\n`;
+    if (lowStockList.length > 0) {
+      tips += `⚠️ **Alerta de Stock Crítico:** Tienes bajo stock de materia prima en: *${lowStockList.join(", ")}*. Sería aconsejable reponer antes de iniciar la próxima tanda de producción en el taller.\n\n`;
+    } else {
+      tips += `✅ **Inventario Estable:** Tus materias primas cargadas en tu despensa tienen buenos niveles de stock.\n\n`;
+    }
+
+    const lowMarginProds = prods.filter(p => p.price < p.cost * 1.5);
+    if (lowMarginProds.length > 0) {
+      tips += `📈 **Oportunidad de Margen:** Tus productos *${lowMarginProds.map(p => p.name).join(", ")}* tienen márgenes de ganancia menores al 50%. Te recomiendo recalcular tus recetas en el taller o ajustar su precio de venta sugerido.\n\n`;
+    } else {
+      tips += `🌟 **Márgenes de Excelencia:** Tu catálogo actual de ventas posee excelentes márgenes de rentabilidad sobre costo (+150% promedio).\n\n`;
+    }
+
+    tips += `Tus datos de ventas y gastos se vinculan de manera segura a tu ID de usuario de Supabase (\`${currentUserId}\`) de forma totalmente aislada.`;
+    return tips;
   }
 };

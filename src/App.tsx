@@ -1,13 +1,5 @@
 import React, { useState, useEffect } from "react";
-import {
-  onAuthStateChanged,
-  signInWithPopup,
-  signOut,
-  createUserWithEmailAndPassword,
-  signInWithEmailAndPassword,
-  updateProfile
-} from "firebase/auth";
-import { auth, googleAuthProvider } from "./lib/firebase.ts";
+import { supabase } from "./lib/supabase.ts";
 import { apiService, setApiAuth, setLocalModeOnly, getIsLocalMode, getBizName } from "./lib/api.ts";
 import { Insumo, Recipe, Product, Transaction, Client } from "./types.ts";
 
@@ -93,60 +85,33 @@ export default function App() {
     }
   };
 
-  // Hybrid Auth Sync (supports Custom Token and Firebase Auth)
+  // Hybrid Auth Sync (supports Supabase Auth)
   useEffect(() => {
     let isUnmounted = false;
 
-    // Check if we have a saved custom session token first
-    const savedToken = localStorage.getItem("finanzas_pro_custom_token");
-    const savedUserStr = localStorage.getItem("finanzas_pro_custom_user");
-    
-    if (savedToken && savedUserStr) {
-      try {
-        const savedUser = JSON.parse(savedUserStr);
-        setApiAuth(savedToken, savedUser.uid, savedUser.displayName);
-        setIsLocalMode(false);
-        if (!isUnmounted) {
-          setUser(savedUser);
-          setBizName(savedUser.bizName || "Mi Taller Gastronómico");
-          setIsLocalMode(false);
-          setIsAuthLoading(false);
-        }
-        return;
-      } catch (err) {
-        console.error("Error reading saved custom session:", err);
-      }
-    }
-
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+    // Listen to Supabase auth events
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       setIsAuthLoading(true);
       setSystemError("");
 
-      if (firebaseUser) {
-        try {
-          // Fetch token to authorize server requests
-          const idToken = await firebaseUser.getIdToken();
-          setApiAuth(idToken, firebaseUser.uid, firebaseUser.displayName);
+      if (session && session.user) {
+        const supabaseUser = session.user;
+        const displayName = supabaseUser.user_metadata?.display_name || supabaseUser.email?.split("@")[0] || "Usuario";
+        const userBizName = supabaseUser.user_metadata?.biz_name || "Mi Taller Gastronómico";
+
+        setApiAuth(session.access_token, supabaseUser.id, userBizName);
+        setIsLocalMode(false);
+
+        if (!isUnmounted) {
+          setUser({
+            id: Date.now(),
+            uid: supabaseUser.id,
+            email: supabaseUser.email || "",
+            displayName: displayName,
+            bizName: userBizName
+          });
+          setBizName(userBizName);
           setIsLocalMode(false);
-
-          // Get temp register business name if any
-          const tempBizReg = localStorage.getItem("temp_biz_name_reg") || undefined;
-
-          // Sync database user in Cloud SQL
-          await apiService.syncAuth(tempBizReg);
-          
-          if (!isUnmounted) {
-            setUser(firebaseUser);
-            setIsLocalMode(false);
-          }
-        } catch (err) {
-          console.error("Authentication integration fail:", err);
-          // Graceful degradation to secure offline LocalStorage
-          setLocalModeOnly(true);
-          if (!isUnmounted) {
-            setUser({ uid: "local-demo-user", displayName: "Materia Prima Demo" });
-            setIsLocalMode(true);
-          }
         }
       } else {
         // Safe Offline Local mode by default if not signed in
@@ -162,7 +127,7 @@ export default function App() {
 
     return () => {
       isUnmounted = true;
-      unsubscribe();
+      subscription.unsubscribe();
     };
   }, []);
 
@@ -174,25 +139,6 @@ export default function App() {
   }, [user, isAuthLoading, isLocalMode]);
 
   // Auth Action Handlers
-  const translateFirebaseError = (code: string): string => {
-    switch (code) {
-      case "auth/email-already-in-use":
-        return "Este correo electrónico ya está registrado.";
-      case "auth/invalid-email":
-        return "El formato de correo electrónico no es válido.";
-      case "auth/operation-not-allowed":
-        return "Operación no habilitada temporalmente.";
-      case "auth/weak-password":
-        return "La contraseña debe tener al menos 6 caracteres.";
-      case "auth/user-not-found":
-      case "auth/wrong-password":
-      case "auth/invalid-credential":
-        return "Correo o contraseña incorrectos.";
-      default:
-        return "Error de autenticación. Intenta de nuevo.";
-    }
-  };
-
   const handleEmailSignUp = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError("");
@@ -202,30 +148,39 @@ export default function App() {
     }
     setIsAuthLoading(true);
     try {
-      const response = await fetch("/api/auth/register", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email: emailInput.trim(),
-          password: passwordInput,
-          displayName: displayNameInput.trim(),
-          bizName: bizNameInput.trim()
-        })
+      const { data, error } = await supabase.auth.signUp({
+        email: emailInput.trim(),
+        password: passwordInput,
+        options: {
+          data: {
+            display_name: displayNameInput.trim(),
+            biz_name: bizNameInput.trim()
+          }
+        }
       });
 
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || "No se pudo registrar la cuenta.");
+      if (error) {
+        throw error;
       }
 
-      setApiAuth(data.token, data.user.uid, data.user.displayName);
-      setIsLocalMode(false);
-      
-      localStorage.setItem("finanzas_pro_custom_token", data.token);
-      localStorage.setItem("finanzas_pro_custom_user", JSON.stringify(data.user));
+      if (!data.user) {
+        throw new Error("No se pudo completar el registro.");
+      }
 
-      setUser(data.user);
-      setBizName(data.user.bizName);
+      const displayName = data.user.user_metadata?.display_name || displayNameInput.trim();
+      const userBizName = data.user.user_metadata?.biz_name || bizNameInput.trim();
+
+      setApiAuth(data.session?.access_token || null, data.user.id, userBizName);
+      setIsLocalMode(false);
+
+      setUser({
+        id: Date.now(),
+        uid: data.user.id,
+        email: data.user.email || "",
+        displayName: displayName,
+        bizName: userBizName
+      });
+      setBizName(userBizName);
 
       setEmailInput("");
       setPasswordInput("");
@@ -233,7 +188,7 @@ export default function App() {
       setBizNameInput("");
     } catch (err: any) {
       console.error(err);
-      setAuthError(err.message || "Error al conectar con el servidor de autenticación.");
+      setAuthError(err.message || "Error al conectar con Supabase para el registro.");
     } finally {
       setIsAuthLoading(false);
     }
@@ -248,34 +203,39 @@ export default function App() {
     }
     setIsAuthLoading(true);
     try {
-      const response = await fetch("/api/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email: emailInput.trim(),
-          password: passwordInput
-        })
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: emailInput.trim(),
+        password: passwordInput
       });
 
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || "No se pudo iniciar sesión.");
+      if (error) {
+        throw error;
       }
 
-      setApiAuth(data.token, data.user.uid, data.user.displayName);
+      if (!data.user) {
+        throw new Error("No se pudo iniciar sesión.");
+      }
+
+      const displayName = data.user.user_metadata?.display_name || data.user.email?.split("@")[0] || "Usuario";
+      const userBizName = data.user.user_metadata?.biz_name || "Mi Taller Gastronómico";
+
+      setApiAuth(data.session?.access_token || null, data.user.id, userBizName);
       setIsLocalMode(false);
 
-      localStorage.setItem("finanzas_pro_custom_token", data.token);
-      localStorage.setItem("finanzas_pro_custom_user", JSON.stringify(data.user));
-
-      setUser(data.user);
-      setBizName(data.user.bizName);
+      setUser({
+        id: Date.now(),
+        uid: data.user.id,
+        email: data.user.email || "",
+        displayName: displayName,
+        bizName: userBizName
+      });
+      setBizName(userBizName);
 
       setEmailInput("");
       setPasswordInput("");
     } catch (err: any) {
       console.error(err);
-      setAuthError(err.message || "Error al conectar con el servidor de autenticación.");
+      setAuthError(err.message || "Error al conectar con Supabase para iniciar sesión.");
     } finally {
       setIsAuthLoading(false);
     }
@@ -285,13 +245,19 @@ export default function App() {
     setIsAuthLoading(true);
     setSystemError("");
     try {
-      await signInWithPopup(auth, googleAuthProvider);
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: {
+          redirectTo: window.location.origin + window.location.pathname
+        }
+      });
+      if (error) throw error;
     } catch (err: any) {
       console.warn("Auth Popup blocked or failed. Degrading gracefully to Local Storage...", err);
       // Degrade to safe LocalStorage mode
       setLocalModeOnly(true);
       setIsLocalMode(true);
-      setUser({ uid: "local-demo-user", displayName: "Materia Prima Demo" });
+      setUser({ id: Date.now(), uid: "local-demo-user", displayName: "Materia Prima Demo", email: "demo@demo.com", bizName: "Mi Taller Gastronómico" });
     } finally {
       setIsAuthLoading(false);
     }
@@ -300,14 +266,14 @@ export default function App() {
   const handleOfflineTrial = () => {
     setLocalModeOnly(true);
     setIsLocalMode(true);
-    setUser({ uid: "local-demo-user", displayName: "Materia Prima Demo" });
+    setUser({ id: Date.now(), uid: "local-demo-user", displayName: "Materia Prima Demo", email: "demo@demo.com", bizName: "Mi Taller Gastronómico" });
     setIsAuthLoading(false);
     loadAllData();
   };
 
   const handleSignOut = async () => {
     try {
-      await signOut(auth);
+      await supabase.auth.signOut();
     } catch (err) {
       console.error(err);
     } finally {

@@ -1,6 +1,6 @@
 {
   "name": "react-example",
-  "homepage": "https://emilce2411.github.io/FinanzasPro/",
+  "homepage": "https://emilce2411.github.io/finanzas-/",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
+    "@supabase/supabase-js": "^2.110.0",
     "@tailwindcss/vite": "^4.1.14",
     "@vitejs/plugin-react": "^5.0.4",
     "dotenv": "^17.2.3",
