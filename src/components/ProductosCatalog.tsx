@@ -21,6 +21,9 @@ export default function ProductosCatalog({ products, setProducts, onProductsChan
   const [name, setName] = useState("");
   const [stock, setStock] = useState("");
   const [price, setPrice] = useState("");
+  const [priceWholesale, setPriceWholesale] = useState("");
+  const [pricePromo, setPricePromo] = useState("");
+  const [promoQty, setPromoQty] = useState("");
   const [cost, setCost] = useState("");
 
   // Filter products list
@@ -44,12 +47,18 @@ export default function ProductosCatalog({ products, setProducts, onProductsChan
         name: name.trim(),
         stock: parseInt(stock),
         price: parseFloat(price),
+        priceWholesale: priceWholesale ? parseFloat(priceWholesale) : null,
+        pricePromo: pricePromo ? parseFloat(pricePromo) : null,
+        promoQty: promoQty ? parseInt(promoQty) : null,
         cost: parseFloat(cost),
       });
 
       setName("");
       setStock("");
       setPrice("");
+      setPriceWholesale("");
+      setPricePromo("");
+      setPromoQty("");
       setCost("");
       setSuccessMsg("¡Producto manual cargado al catálogo!");
       onProductsChange();
@@ -118,20 +127,20 @@ export default function ProductosCatalog({ products, setProducts, onProductsChan
               />
             </div>
 
-            <div className="grid grid-cols-3 gap-2">
-              <div className="col-span-1">
+            <div className="grid grid-cols-2 gap-2">
+              <div>
                 <label className="block text-xs font-semibold text-slate-600 mb-1">Stock Inicial *</label>
                 <input
                   type="number"
                   value={stock}
                   onChange={e => setStock(e.target.value)}
                   placeholder="Ej. 10"
-                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none"
+                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 font-medium"
                   required
                 />
               </div>
 
-              <div className="col-span-1">
+              <div>
                 <label className="block text-xs font-semibold text-slate-600 mb-1">Costo Unit *</label>
                 <input
                   type="number"
@@ -139,21 +148,60 @@ export default function ProductosCatalog({ products, setProducts, onProductsChan
                   value={cost}
                   onChange={e => setCost(e.target.value)}
                   placeholder="Ej. 1.20"
-                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none"
+                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 font-medium"
                   required
                 />
               </div>
+            </div>
 
-              <div className="col-span-1">
-                <label className="block text-xs font-semibold text-slate-600 mb-1">PVP Venta *</label>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">P. Público *</label>
                 <input
                   type="number"
                   step="any"
                   value={price}
                   onChange={e => setPrice(e.target.value)}
                   placeholder="Ej. 2.50"
-                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none"
+                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 font-medium"
                   required
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">P. Mayorista</label>
+                <input
+                  type="number"
+                  step="any"
+                  value={priceWholesale}
+                  onChange={e => setPriceWholesale(e.target.value)}
+                  placeholder="Opcional"
+                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 font-medium"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">P. Promos</label>
+                <input
+                  type="number"
+                  step="any"
+                  value={pricePromo}
+                  onChange={e => setPricePromo(e.target.value)}
+                  placeholder="Opcional"
+                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 font-medium"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Cant. Promo</label>
+                <input
+                  type="number"
+                  value={promoQty}
+                  onChange={e => setPromoQty(e.target.value)}
+                  placeholder="Ej. 3 u."
+                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 font-medium"
                 />
               </div>
             </div>
@@ -211,9 +259,11 @@ export default function ProductosCatalog({ products, setProducts, onProductsChan
                   <tr>
                     <th className="px-5 py-3">Producto</th>
                     <th className="px-5 py-3">Procedencia</th>
-                    <th className="px-5 py-3">Stock Disponible</th>
-                    <th className="px-5 py-3">Cálculo Margen</th>
-                    <th className="px-5 py-3 text-right">Acciones de Stock</th>
+                    <th className="px-5 py-3">Stock</th>
+                    <th className="px-5 py-3 text-slate-500">Costo Unit.</th>
+                    <th className="px-5 py-3 text-indigo-600">Lista de Precios</th>
+                    <th className="px-5 py-3 text-emerald-600">Ganancia Unit. (Púb)</th>
+                    <th className="px-5 py-3 text-right">Acciones</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -225,9 +275,6 @@ export default function ProductosCatalog({ products, setProducts, onProductsChan
                       <tr key={prod.id} className="hover:bg-slate-50/40 transition-colors">
                         <td className="px-5 py-4 font-medium text-slate-900">
                           <div className="font-bold text-slate-800">{prod.name}</div>
-                          <div className="text-[10px] text-slate-400 font-mono mt-0.5">
-                            Costo Ref: ${prod.cost.toFixed(2)} | PVP: ${prod.price.toFixed(2)}
-                          </div>
                         </td>
 
                         <td className="px-5 py-4 text-xs">
@@ -251,10 +298,33 @@ export default function ProductosCatalog({ products, setProducts, onProductsChan
                           )}
                         </td>
 
+                        <td className="px-5 py-4 font-mono text-xs font-semibold text-slate-500">
+                          ${prod.cost.toFixed(2)}
+                        </td>
+
                         <td className="px-5 py-4">
-                          <div className="flex items-center gap-1">
-                            <span className="text-xs font-semibold text-emerald-600 font-mono">+${profit.toFixed(2)}</span>
-                            <span className="text-[10px] bg-emerald-50 text-emerald-700 px-1.5 py-0.5 rounded border border-emerald-100 font-bold">
+                          <div className="flex flex-col gap-0.5 text-xs">
+                            <span className="font-mono font-bold text-indigo-600" title="Precio al público">
+                              Púb: ${prod.price.toFixed(2)}
+                            </span>
+                            <span className="font-mono text-slate-500 text-[11px]" title="Precio por mayorista">
+                              May: {prod.priceWholesale ? `$${Number(prod.priceWholesale).toFixed(2)}` : <span className="text-slate-400 italic">--</span>}
+                            </span>
+                            <span className="font-mono text-amber-600 text-[11px]" title="Precio promocional">
+                              Promo: {prod.pricePromo ? (
+                                <>
+                                  ${Number(prod.pricePromo).toFixed(2)}
+                                  {prod.promoQty && prod.promoQty > 1 ? <span className="text-[10px] text-amber-800 font-bold bg-amber-50 px-1 py-0.2 rounded border border-amber-200 ml-1">x{prod.promoQty}u</span> : ""}
+                                </>
+                              ) : <span className="text-slate-400 italic">--</span>}
+                            </span>
+                          </div>
+                        </td>
+
+                        <td className="px-5 py-4">
+                          <div className="flex flex-col">
+                            <span className="text-xs font-bold text-emerald-600 font-mono">+${profit.toFixed(2)}</span>
+                            <span className="text-[9px] text-emerald-700 font-semibold bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-100 w-max mt-0.5">
                               {marginPercent.toFixed(0)}%
                             </span>
                           </div>

@@ -108,16 +108,16 @@ function ensureLocalDemoDataSeeded() {
     safeStorage.setItem(`es_biz_recipes_user_${currentUserId}`, JSON.stringify(defaultRecipes));
 
     const defaultProducts: Product[] = [
-      { id: 301, recipeId: 201, name: "Alfajor Premium Maicena x Unid", stock: 36, price: 3.50, cost: 0.225 },
-      { id: 302, recipeId: null, name: "Conito de Dulce de Leche x Unid", stock: 15, price: 2.80, cost: 0.90 }
+      { id: 301, recipeId: 201, name: "Alfajor Premium Maicena x Unid", stock: 36, price: 3.50, priceWholesale: 2.90, pricePromo: 2.70, promoQty: 3, cost: 0.225 },
+      { id: 302, recipeId: null, name: "Conito de Dulce de Leche x Unid", stock: 15, price: 2.80, priceWholesale: 2.20, pricePromo: 2.00, promoQty: 2, cost: 0.90 }
     ];
     safeStorage.setItem(`es_biz_products_user_${currentUserId}`, JSON.stringify(defaultProducts));
 
     const defaultTransactions: Transaction[] = [
       { id: 401, type: "purchase", amount: -125, description: "Compra inicial de materias primas (Local Offline)", date: "2026-06-25" },
       { id: 402, type: "expense", amount: -45, description: "Gastos operativos taller (Local Offline)", date: "2026-06-26" },
-      { id: 403, type: "sale", amount: 84, description: "Venta: 24 Alfajores Premium (Local)", date: "2026-06-27" },
-      { id: 404, type: "sale", amount: 42, description: "Venta: 15 Conitos de Dulce de Leche (Local)", date: "2026-06-27" },
+      { id: 403, type: "sale", amount: 84, description: "Venta: 24 Alfajores Premium (Local) | Costo: 5.40 | Ganancia: 78.60", date: "2026-06-27" },
+      { id: 404, type: "sale", amount: 42, description: "Venta: 15 Conitos de Dulce de Leche (Local) | Costo: 13.50 | Ganancia: 28.50", date: "2026-06-27" },
     ];
     safeStorage.setItem(`es_biz_transactions_user_${currentUserId}`, JSON.stringify(defaultTransactions));
 
@@ -247,6 +247,13 @@ export const apiService = {
       unitCost: unitCost,
     };
 
+    // Find previous state to calculate stock difference
+    const currentItems = getLocalItems<Insumo>("insumos");
+    const oldInsumo = currentItems.find(i => i.id === id);
+    const oldQty = oldInsumo ? oldInsumo.quantity : 0;
+
+    let finalInsumo: Insumo | null = null;
+
     if (currentUserId && currentUserId !== "local-demo-user") {
       try {
         const { data: updated, error } = await supabase
@@ -263,24 +270,45 @@ export const apiService = {
             items[idx] = updated;
             saveLocalItems("insumos", items);
           }
-          return updated as Insumo;
+          finalInsumo = updated as Insumo;
         }
       } catch (err) {
         console.warn("Supabase update failed for insumos, saving locally:", err);
       }
     }
 
-    const items = getLocalItems<Insumo>("insumos");
-    const idx = items.findIndex(i => i.id === id);
-    if (idx !== -1) {
-      items[idx] = {
-        ...items[idx],
-        ...updates,
-      };
-      saveLocalItems("insumos", items);
-      return items[idx];
+    if (!finalInsumo) {
+      const items = getLocalItems<Insumo>("insumos");
+      const idx = items.findIndex(i => i.id === id);
+      if (idx !== -1) {
+        items[idx] = {
+          ...items[idx],
+          ...updates,
+        };
+        saveLocalItems("insumos", items);
+        finalInsumo = items[idx];
+      }
     }
-    throw new Error("Materia prima no encontrada");
+
+    if (!finalInsumo) {
+      throw new Error("Materia prima no encontrada");
+    }
+
+    // Check if stock has been increased (compró más de ese producto/insumo)
+    const diffQty = data.quantity - oldQty;
+    if (diffQty > 0) {
+      const purchaseAmount = diffQty * unitCost;
+      if (purchaseAmount > 0) {
+        await this.createTransaction({
+          type: "purchase",
+          amount: -purchaseAmount,
+          description: `Compra de Materia Prima (Actualización Stock): +${diffQty.toFixed(1)}${data.unit} de ${data.name}`,
+          date: new Date().toISOString().split("T")[0],
+        });
+      }
+    }
+
+    return finalInsumo;
   },
 
   async deleteInsumo(id: number): Promise<{ success: boolean }> {
@@ -448,7 +476,12 @@ export const apiService = {
           .eq("user_id", currentUserId)
           .order("id", { ascending: false });
         if (!error && data) {
-          return data as Product[];
+          return (data as any[]).map(p => ({
+            ...p,
+            priceWholesale: p.price_wholesale !== undefined ? p.price_wholesale : p.priceWholesale,
+            pricePromo: p.price_promo !== undefined ? p.price_promo : p.pricePromo,
+            promoQty: p.promo_qty !== undefined ? p.promo_qty : p.promoQty,
+          })) as Product[];
         }
       } catch (err) {
         console.warn("Supabase fetch failed for products, returning local storage:", err);
@@ -457,28 +490,44 @@ export const apiService = {
     return getLocalItems<Product>("products");
   },
 
-  async createProduct(data: { name: string; stock: number; price: number; cost: number; recipeId?: number | null }): Promise<Product> {
+  async createProduct(data: { name: string; stock: number; price: number; priceWholesale?: number | null; pricePromo?: number | null; promoQty?: number | null; cost: number; recipeId?: number | null }): Promise<Product> {
     const newProduct: Product = {
       id: Date.now(),
       recipeId: data.recipeId || null,
       name: data.name,
       stock: data.stock,
       price: data.price,
+      priceWholesale: data.priceWholesale || null,
+      pricePromo: data.pricePromo || null,
+      promoQty: data.promoQty || null,
       cost: data.cost,
     };
 
     if (currentUserId && currentUserId !== "local-demo-user") {
       try {
+        const insertData = {
+          ...newProduct,
+          price_wholesale: newProduct.priceWholesale,
+          price_promo: newProduct.pricePromo,
+          promo_qty: newProduct.promoQty,
+          user_id: currentUserId,
+        };
         const { data: inserted, error } = await supabase
           .from("products")
-          .insert([{ ...newProduct, user_id: currentUserId }])
+          .insert([insertData])
           .select()
           .single();
         if (!error && inserted) {
+          const mappedInserted: Product = {
+            ...inserted,
+            priceWholesale: (inserted as any).price_wholesale !== undefined ? (inserted as any).price_wholesale : (inserted as any).priceWholesale,
+            pricePromo: (inserted as any).price_promo !== undefined ? (inserted as any).price_promo : (inserted as any).pricePromo,
+            promoQty: (inserted as any).promo_qty !== undefined ? (inserted as any).promo_qty : (inserted as any).promoQty,
+          };
           const prods = getLocalItems<Product>("products");
-          prods.unshift(inserted);
+          prods.unshift(mappedInserted);
           saveLocalItems("products", prods);
-          return inserted as Product;
+          return mappedInserted;
         }
       } catch (err) {
         console.warn("Supabase product create failed, saving locally:", err);
@@ -491,24 +540,40 @@ export const apiService = {
     return newProduct;
   },
 
-  async updateProduct(id: number, data: { name?: string; stock?: number; price?: number; cost?: number }): Promise<Product> {
+  async updateProduct(id: number, data: { name?: string; stock?: number; price?: number; priceWholesale?: number | null; pricePromo?: number | null; promoQty?: number | null; cost?: number }): Promise<Product> {
     if (currentUserId && currentUserId !== "local-demo-user") {
       try {
+        const updateData: any = { ...data };
+        if (data.priceWholesale !== undefined) {
+          updateData.price_wholesale = data.priceWholesale;
+        }
+        if (data.pricePromo !== undefined) {
+          updateData.price_promo = data.pricePromo;
+        }
+        if (data.promoQty !== undefined) {
+          updateData.promo_qty = data.promoQty;
+        }
         const { data: updated, error } = await supabase
           .from("products")
-          .update(data)
+          .update(updateData)
           .eq("id", id)
           .eq("user_id", currentUserId)
           .select()
           .single();
         if (!error && updated) {
+          const mappedUpdated: Product = {
+            ...updated,
+            priceWholesale: (updated as any).price_wholesale !== undefined ? (updated as any).price_wholesale : (updated as any).priceWholesale,
+            pricePromo: (updated as any).price_promo !== undefined ? (updated as any).price_promo : (updated as any).pricePromo,
+            promoQty: (updated as any).promo_qty !== undefined ? (updated as any).promo_qty : (updated as any).promoQty,
+          };
           const prods = getLocalItems<Product>("products");
           const idx = prods.findIndex(p => p.id === id);
           if (idx !== -1) {
-            prods[idx] = updated;
+            prods[idx] = mappedUpdated;
             saveLocalItems("products", prods);
           }
-          return updated as Product;
+          return mappedUpdated;
         }
       } catch (err) {
         console.warn("Supabase product update failed, updating locally:", err);
@@ -692,9 +757,79 @@ export const apiService = {
     return newTx;
   },
 
-  async checkoutCart(items: { productId: number; qty: number }[], clientName?: string): Promise<any> {
+  async deleteTransaction(id: number | string): Promise<{ success: boolean }> {
+    let tx: Transaction | undefined;
+    const txs = getLocalItems<Transaction>("transactions");
+    tx = txs.find(t => String(t.id) === String(id));
+
+    if (!tx && currentUserId && currentUserId !== "local-demo-user") {
+      try {
+        const { data, error } = await supabase
+          .from("transactions")
+          .select("*")
+          .eq("id", id)
+          .single();
+        if (!error && data) {
+          tx = data as Transaction;
+        }
+      } catch (err) {
+        console.warn("Failed to fetch transaction from Supabase:", err);
+      }
+    }
+
+    // Correcting stock / restoring quantity if it was a Stock Update transaction
+    if (tx) {
+      // format: "Compra de Materia Prima (Actualización Stock): +500.0g de Harina de Trigo"
+      const match = tx.description.match(/Compra de Materia Prima \(Actualización Stock\):\s*\+([\d.]+)\s*(\w+)?\s*de\s*(.+)/i);
+      if (match) {
+        const qtyAdded = parseFloat(match[1]);
+        const insumoName = match[3].trim();
+
+        const insumos = getLocalItems<Insumo>("insumos");
+        const insumoIdx = insumos.findIndex(i => i.name.toLowerCase() === insumoName.toLowerCase());
+        if (insumoIdx !== -1) {
+          const insumo = insumos[insumoIdx];
+          const newQty = Math.max(0, insumo.quantity - qtyAdded);
+          insumo.quantity = newQty;
+          insumos[insumoIdx] = insumo;
+          saveLocalItems("insumos", insumos);
+
+          if (currentUserId && currentUserId !== "local-demo-user") {
+            try {
+              await supabase
+                .from("insumos")
+                .update({ quantity: newQty })
+                .eq("id", insumo.id)
+                .eq("user_id", currentUserId);
+            } catch (err) {
+              console.warn("Supabase update for corrected stock failed:", err);
+            }
+          }
+        }
+      }
+    }
+
+    if (currentUserId && currentUserId !== "local-demo-user") {
+      const { error } = await supabase
+        .from("transactions")
+        .delete()
+        .eq("id", id)
+        .eq("user_id", currentUserId);
+      if (error) {
+        console.error("Supabase transaction delete failed:", error);
+        throw new Error(`No se pudo eliminar la transacción de la base de datos: ${error.message}`);
+      }
+    }
+
+    const filtered = txs.filter(t => String(t.id) !== String(id));
+    saveLocalItems("transactions", filtered);
+    return { success: true };
+  },
+
+  async checkoutCart(items: { productId: number; qty: number; selectedPriceType?: "public" | "wholesale" | "promo" }[], clientName?: string): Promise<any> {
     const prods = getLocalItems<Product>("products");
     let totalSaleRevenue = 0;
+    let totalCostInsumos = 0;
     const salesDescriptions: string[] = [];
 
     for (const item of items) {
@@ -705,13 +840,45 @@ export const apiService = {
         stock: prod.stock - item.qty
       });
       
-      const itemRevenue = prod.price * item.qty;
+      let itemRevenue = 0;
+      let priceLabel = "";
+      if (item.selectedPriceType === "wholesale" && prod.priceWholesale !== undefined && prod.priceWholesale !== null) {
+        itemRevenue = Number(prod.priceWholesale) * item.qty;
+        priceLabel = " (Mayorista)";
+      } else if (item.selectedPriceType === "promo" && prod.pricePromo !== undefined && prod.pricePromo !== null) {
+        const pQty = prod.promoQty || 1;
+        if (pQty > 1) {
+          if (item.qty >= pQty) {
+            const numPromos = Math.floor(item.qty / pQty);
+            const leftovers = item.qty % pQty;
+            itemRevenue = (numPromos * Number(prod.pricePromo)) + (leftovers * prod.price);
+            priceLabel = ` (Promo x${pQty})`;
+          } else {
+            itemRevenue = prod.price * item.qty;
+            priceLabel = " (Púb - Falta mín. promo)";
+          }
+        } else {
+          itemRevenue = Number(prod.pricePromo) * item.qty;
+          priceLabel = " (Promo)";
+        }
+      } else {
+        itemRevenue = prod.price * item.qty;
+      }
+      
       totalSaleRevenue += itemRevenue;
-      salesDescriptions.push(`${item.qty}x ${prod.name}`);
+      
+      const itemCost = (prod.cost || 0) * item.qty;
+      totalCostInsumos += itemCost;
+      
+      salesDescriptions.push(`${item.qty}x ${prod.name}${priceLabel}`);
     }
 
-    // Log movement
-    const description = `Venta Caja: ${salesDescriptions.join(", ")}` + (clientName ? ` (Cliente: ${clientName})` : "");
+    const totalProfit = totalSaleRevenue - totalCostInsumos;
+
+    // Log movement with separated cost and profit encoded in the description
+    const baseDescription = `Venta Caja: ${salesDescriptions.join(", ")}` + (clientName ? ` (Cliente: ${clientName})` : "");
+    const description = `${baseDescription} | Costo: ${totalCostInsumos.toFixed(2)} | Ganancia: ${totalProfit.toFixed(2)}`;
+
     const loggedTx = await this.createTransaction({
       type: "sale",
       amount: totalSaleRevenue,

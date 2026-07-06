@@ -41,6 +41,9 @@ export interface Product {
   name: string;
   stock: number;
   price: number;
+  priceWholesale?: number | null;
+  pricePromo?: number | null;
+  promoQty?: number | null;
   cost: number;
   createdAt?: string;
 }

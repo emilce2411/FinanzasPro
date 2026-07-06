@@ -556,7 +556,7 @@ async function startServer() {
 
   app.post("/api/products", requireAuth, async (req: AuthRequest, res) => {
     try {
-      const { name, stock, price, cost } = req.body;
+      const { name, stock, price, priceWholesale, pricePromo, promoQty, cost } = req.body;
       if (!name || price === undefined) {
         return res.status(400).json({ error: "Nombre y precio son requeridos" });
       }
@@ -566,6 +566,9 @@ async function startServer() {
         name: name.trim(),
         stock: stock ? parseInt(stock) : 0,
         price: parseFloat(price),
+        priceWholesale: priceWholesale !== undefined && priceWholesale !== null ? parseFloat(priceWholesale) : null,
+        pricePromo: pricePromo !== undefined && pricePromo !== null ? parseFloat(pricePromo) : null,
+        promoQty: promoQty !== undefined && promoQty !== null ? parseInt(promoQty) : 1,
         cost: cost ? parseFloat(cost) : 0,
       }).returning();
 
@@ -579,7 +582,7 @@ async function startServer() {
   app.put("/api/products/:id", requireAuth, async (req: AuthRequest, res) => {
     try {
       const { id } = req.params;
-      const { name, stock, price, cost } = req.body;
+      const { name, stock, price, priceWholesale, pricePromo, promoQty, cost } = req.body;
 
       const existing = await db.select()
         .from(products)
@@ -594,6 +597,9 @@ async function startServer() {
           name: name ? name.trim() : existing[0].name,
           stock: stock !== undefined ? parseInt(stock) : existing[0].stock,
           price: price !== undefined ? parseFloat(price) : existing[0].price,
+          priceWholesale: priceWholesale !== undefined ? (priceWholesale === null ? null : parseFloat(priceWholesale)) : existing[0].priceWholesale,
+          pricePromo: pricePromo !== undefined ? (pricePromo === null ? null : parseFloat(pricePromo)) : existing[0].pricePromo,
+          promoQty: promoQty !== undefined ? (promoQty === null ? null : parseInt(promoQty)) : existing[0].promoQty,
           cost: cost !== undefined ? parseFloat(cost) : existing[0].cost,
         })
         .where(eq(products.id, parseInt(id)))
@@ -846,9 +852,33 @@ async function startServer() {
           .set({ stock: updatedStock })
           .where(eq(products.id, product.id));
 
-        const itemRevenue = product.price * qtyToSell;
+        let itemRevenue = 0;
+        let priceLabel = "";
+        if (item.selectedPriceType === "wholesale" && product.priceWholesale !== null && product.priceWholesale !== undefined) {
+          itemRevenue = Number(product.priceWholesale) * qtyToSell;
+          priceLabel = " (Mayorista)";
+        } else if (item.selectedPriceType === "promo" && product.pricePromo !== null && product.pricePromo !== undefined) {
+          const pQty = product.promoQty || 1;
+          if (pQty > 1) {
+            if (qtyToSell >= pQty) {
+              const numPromos = Math.floor(qtyToSell / pQty);
+              const leftovers = qtyToSell % pQty;
+              itemRevenue = (numPromos * Number(product.pricePromo)) + (leftovers * product.price);
+              priceLabel = ` (Promo x${pQty})`;
+            } else {
+              itemRevenue = product.price * qtyToSell;
+              priceLabel = " (Púb - Falta mín. promo)";
+            }
+          } else {
+            itemRevenue = Number(product.pricePromo) * qtyToSell;
+            priceLabel = " (Promo)";
+          }
+        } else {
+          itemRevenue = product.price * qtyToSell;
+        }
+
         totalSaleRevenue += itemRevenue;
-        salesDescriptions.push(`${qtyToSell}x ${product.name}`);
+        salesDescriptions.push(`${qtyToSell}x ${product.name}${priceLabel}`);
       }
 
       const finalDescription = `Venta Caja: ${salesDescriptions.join(", ")}` + (clientName ? ` (Cliente: ${clientName})` : "");

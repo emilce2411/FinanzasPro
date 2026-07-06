@@ -63,6 +63,9 @@ export const products = pgTable("products", {
   name: text("name").notNull(),
   stock: integer("stock").default(0).notNull(), // Finished products ready to sell
   price: real("price").notNull(), // Selling price
+  priceWholesale: real("price_wholesale"), // Wholesale price
+  pricePromo: real("price_promo"), // Promotional price
+  promoQty: integer("promo_qty").default(1), // Quantity associated with the promo (e.g., 2, 3...)
   cost: real("cost").default(0).notNull(), // Production cost per piece
   createdAt: timestamp("created_at").defaultNow(),
 });

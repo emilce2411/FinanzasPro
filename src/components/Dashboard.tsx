@@ -13,7 +13,12 @@ import {
   Send,
   HelpCircle,
   Clock,
-  Briefcase
+  Briefcase,
+  Package,
+  Coins,
+  Edit2,
+  Check,
+  X
 } from "lucide-react";
 
 interface DashboardProps {
@@ -30,14 +35,59 @@ export default function Dashboard({ insumos, products, transactions, onTabChange
   const [aiResponse, setAiResponse] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
 
+  // Overrides for manual editing of metrics
+  const [overrideGanancia, setOverrideGanancia] = useState<number | null>(() => {
+    const v = localStorage.getItem("finanzaspro_override_ganancia");
+    return v ? parseFloat(v) : null;
+  });
+  const [overrideCostos, setOverrideCostos] = useState<number | null>(() => {
+    const v = localStorage.getItem("finanzaspro_override_costos");
+    return v ? parseFloat(v) : null;
+  });
+  const [overrideCaja, setOverrideCaja] = useState<number | null>(() => {
+    const v = localStorage.getItem("finanzaspro_override_caja");
+    return v ? parseFloat(v) : null;
+  });
+  const [overrideVentas, setOverrideVentas] = useState<number | null>(() => {
+    const v = localStorage.getItem("finanzaspro_override_ventas");
+    return v ? parseFloat(v) : null;
+  });
+  const [overrideFondo, setOverrideFondo] = useState<number | null>(() => {
+    const v = localStorage.getItem("finanzaspro_override_fondo");
+    return v ? parseFloat(v) : null;
+  });
+
+  const [isEditingGanancia, setIsEditingGanancia] = useState(false);
+  const [isEditingCostos, setIsEditingCostos] = useState(false);
+  const [isEditingCaja, setIsEditingCaja] = useState(false);
+  const [isEditingVentas, setIsEditingVentas] = useState(false);
+  const [isEditingFondo, setIsEditingFondo] = useState(false);
+
+  const [tempGanancia, setTempGanancia] = useState("");
+  const [tempCostos, setTempCostos] = useState("");
+  const [tempCaja, setTempCaja] = useState("");
+  const [tempVentas, setTempVentas] = useState("");
+  const [tempFondo, setTempFondo] = useState("");
+
   // Financial calculations
   let totalSales = 0;
   let totalPurchases = 0;
   let totalExpenses = 0;
+  let totalCostFromSales = 0;
+  let totalProfitFromSales = 0;
 
   transactions.forEach((tx) => {
     if (tx.type === "sale") {
       totalSales += Math.abs(tx.amount);
+      const match = tx.description.match(/\|\s*Costo:\s*\$?([\d.]+)\s*\|\s*Ganancia:\s*\$?([\d.]+)/i);
+      if (match) {
+        totalCostFromSales += parseFloat(match[1]);
+        totalProfitFromSales += parseFloat(match[2]);
+      } else {
+        const estimatedCost = tx.amount / 2.5;
+        totalCostFromSales += estimatedCost;
+        totalProfitFromSales += (tx.amount - estimatedCost);
+      }
     } else if (tx.type === "purchase") {
       totalPurchases += Math.abs(tx.amount);
     } else if (tx.type === "expense") {
@@ -45,7 +95,15 @@ export default function Dashboard({ insumos, products, transactions, onTabChange
     }
   });
 
-  const netCaja = totalSales - totalPurchases - totalExpenses;
+  const netCaja = totalSales - totalPurchases;
+  const gananciaNeta = totalProfitFromSales;
+  const fondoInsumos = totalCostFromSales - totalPurchases;
+
+  const displaySales = overrideVentas !== null ? overrideVentas : totalSales;
+  const displayGanancia = overrideGanancia !== null ? overrideGanancia : gananciaNeta;
+  const displayCostos = overrideCostos !== null ? overrideCostos : totalPurchases;
+  const displayFondo = overrideFondo !== null ? overrideFondo : fondoInsumos;
+  const displayCaja = overrideCaja !== null ? overrideCaja : netCaja;
 
   // Alerts: items with stock under 1500g/ml or units
   const lowStockInsumos = insumos.filter((i) => i.quantity < 1500);
@@ -116,55 +174,370 @@ export default function Dashboard({ insumos, products, transactions, onTabChange
       </div>
 
       {/* KPI Cards Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* KPI 1 */}
-        <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex items-center gap-4">
-          <div className="w-12 h-12 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+        {/* KPI 1: Ventas Totales */}
+        <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex items-center gap-4 min-h-[100px]">
+          <div className="w-12 h-12 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
             <TrendingUp className="w-6 h-6" />
           </div>
-          <div>
-            <p className="text-xs text-slate-400 font-medium uppercase tracking-wider">Ventas Totales</p>
-            <h3 className="text-xl font-bold text-slate-900 mt-0.5">${totalSales.toLocaleString("es-AR", { minimumFractionDigits: 2 })}</h3>
-            <p className="text-[10px] text-emerald-600 font-semibold mt-1 flex items-center gap-0.5">🟢 Ingresos de caja</p>
+          <div className="flex-1 min-w-0">
+            <p className="text-[10px] text-slate-400 font-medium uppercase tracking-wider">Ventas Totales</p>
+            {isEditingVentas ? (
+              <div className="flex items-center gap-1 mt-1">
+                <span className="text-slate-400 font-bold">$</span>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={tempVentas}
+                  onChange={(e) => setTempVentas(e.target.value)}
+                  className="w-20 bg-slate-50 border border-slate-200 text-xs font-bold rounded px-1.5 py-0.5 text-slate-800 focus:outline-hidden focus:border-emerald-400"
+                  autoFocus
+                />
+                <button
+                  onClick={() => {
+                    const val = parseFloat(tempVentas);
+                    if (!isNaN(val)) {
+                      localStorage.setItem("finanzaspro_override_ventas", val.toString());
+                      setOverrideVentas(val);
+                    } else {
+                      localStorage.removeItem("finanzaspro_override_ventas");
+                      setOverrideVentas(null);
+                    }
+                    setIsEditingVentas(false);
+                  }}
+                  className="p-0.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-600 rounded cursor-pointer"
+                >
+                  <Check className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  onClick={() => setIsEditingVentas(false)}
+                  className="p-0.5 bg-slate-100 hover:bg-slate-200 text-slate-500 rounded cursor-pointer"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-1 mt-0.5 group">
+                <h3 className="text-base font-bold text-slate-900 truncate">
+                  ${displaySales.toLocaleString("es-AR", { minimumFractionDigits: 2 })}
+                </h3>
+                <button
+                  onClick={() => {
+                    setTempVentas(overrideVentas !== null ? overrideVentas.toString() : totalSales.toFixed(2));
+                    setIsEditingVentas(true);
+                  }}
+                  className="p-0.5 text-slate-300 hover:text-emerald-600 rounded transition-colors cursor-pointer shrink-0"
+                  title="Editar a mano"
+                >
+                  <Edit2 className="w-3 h-3" />
+                </button>
+                {overrideVentas !== null && (
+                  <button
+                    onClick={() => {
+                      localStorage.removeItem("finanzaspro_override_ventas");
+                      setOverrideVentas(null);
+                    }}
+                    className="text-[8px] text-emerald-600 hover:underline font-bold"
+                  >
+                    Auto
+                  </button>
+                )}
+              </div>
+            )}
+            <p className="text-[9px] text-emerald-600 font-semibold mt-1">🟢 Total Cobrado</p>
           </div>
         </div>
 
-        {/* KPI 2 */}
-        <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex items-center gap-4">
-          <div className="w-12 h-12 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center">
+        {/* KPI 2: Ganancia de Ventas */}
+        <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex items-center gap-4 min-h-[100px]">
+          <div className="w-12 h-12 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0">
+            <Coins className="w-6 h-6" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-[10px] text-slate-400 font-medium uppercase tracking-wider">Ganancia Neta</p>
+            {isEditingGanancia ? (
+              <div className="flex items-center gap-1 mt-1">
+                <span className="text-slate-400 font-bold">$</span>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={tempGanancia}
+                  onChange={(e) => setTempGanancia(e.target.value)}
+                  className="w-20 bg-slate-50 border border-slate-200 text-xs font-bold rounded px-1.5 py-0.5 text-slate-800 focus:outline-hidden focus:border-indigo-400"
+                  autoFocus
+                />
+                <button
+                  onClick={() => {
+                    const val = parseFloat(tempGanancia);
+                    if (!isNaN(val)) {
+                      localStorage.setItem("finanzaspro_override_ganancia", val.toString());
+                      setOverrideGanancia(val);
+                    } else {
+                      localStorage.removeItem("finanzaspro_override_ganancia");
+                      setOverrideGanancia(null);
+                    }
+                    setIsEditingGanancia(false);
+                  }}
+                  className="p-0.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 rounded cursor-pointer"
+                >
+                  <Check className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  onClick={() => setIsEditingGanancia(false)}
+                  className="p-0.5 bg-slate-100 hover:bg-slate-200 text-slate-500 rounded cursor-pointer"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-1 mt-0.5 group">
+                <h3 className={`text-base font-bold truncate ${displayGanancia >= 0 ? "text-slate-900" : "text-rose-600"}`}>
+                  ${displayGanancia.toLocaleString("es-AR", { minimumFractionDigits: 2 })}
+                </h3>
+                <button
+                  onClick={() => {
+                    setTempGanancia(overrideGanancia !== null ? overrideGanancia.toString() : gananciaNeta.toFixed(2));
+                    setIsEditingGanancia(true);
+                  }}
+                  className="p-0.5 text-slate-300 hover:text-indigo-600 rounded transition-colors cursor-pointer shrink-0"
+                  title="Editar a mano"
+                >
+                  <Edit2 className="w-3 h-3" />
+                </button>
+                {overrideGanancia !== null && (
+                  <button
+                    onClick={() => {
+                      localStorage.removeItem("finanzaspro_override_ganancia");
+                      setOverrideGanancia(null);
+                    }}
+                    className="text-[8px] text-indigo-600 hover:underline font-bold"
+                  >
+                    Auto
+                  </button>
+                )}
+              </div>
+            )}
+            <p className="text-[9px] text-indigo-600 font-semibold mt-1">⭐ Utilidad de Margen</p>
+          </div>
+        </div>
+
+        {/* KPI 3: Inversión Insumos */}
+        <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex items-center gap-4 min-h-[100px]">
+          <div className="w-12 h-12 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center shrink-0">
             <Layers className="w-6 h-6" />
           </div>
-          <div>
-            <p className="text-xs text-slate-400 font-medium uppercase tracking-wider">Inversión Insumos</p>
-            <h3 className="text-xl font-bold text-slate-900 mt-0.5">${totalPurchases.toLocaleString("es-AR", { minimumFractionDigits: 2 })}</h3>
-            <p className="text-[10px] text-rose-500 font-semibold mt-1 flex items-center gap-0.5">🔴 Compra de materias</p>
+          <div className="flex-1 min-w-0">
+            <p className="text-[10px] text-slate-400 font-medium uppercase tracking-wider">Inversión Insumos</p>
+            {isEditingCostos ? (
+              <div className="flex items-center gap-1 mt-1">
+                <span className="text-slate-400 font-bold">$</span>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={tempCostos}
+                  onChange={(e) => setTempCostos(e.target.value)}
+                  className="w-20 bg-slate-50 border border-slate-200 text-xs font-bold rounded px-1.5 py-0.5 text-slate-800 focus:outline-hidden focus:border-rose-400"
+                  autoFocus
+                />
+                <button
+                  onClick={() => {
+                    const val = parseFloat(tempCostos);
+                    if (!isNaN(val)) {
+                      localStorage.setItem("finanzaspro_override_costos", val.toString());
+                      setOverrideCostos(val);
+                    } else {
+                      localStorage.removeItem("finanzaspro_override_costos");
+                      setOverrideCostos(null);
+                    }
+                    setIsEditingCostos(false);
+                  }}
+                  className="p-0.5 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded cursor-pointer"
+                >
+                  <Check className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  onClick={() => setIsEditingCostos(false)}
+                  className="p-0.5 bg-slate-100 hover:bg-slate-200 text-slate-500 rounded cursor-pointer"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-1 mt-0.5 group">
+                <h3 className="text-base font-bold text-slate-900 truncate">
+                  ${displayCostos.toLocaleString("es-AR", { minimumFractionDigits: 2 })}
+                </h3>
+                <button
+                  onClick={() => {
+                    setTempCostos(overrideCostos !== null ? overrideCostos.toString() : totalPurchases.toFixed(2));
+                    setIsEditingCostos(true);
+                  }}
+                  className="p-0.5 text-slate-300 hover:text-rose-600 rounded transition-colors cursor-pointer shrink-0"
+                  title="Editar a mano"
+                >
+                  <Edit2 className="w-3 h-3" />
+                </button>
+                {overrideCostos !== null && (
+                  <button
+                    onClick={() => {
+                      localStorage.removeItem("finanzaspro_override_costos");
+                      setOverrideCostos(null);
+                    }}
+                    className="text-[8px] text-rose-600 hover:underline font-bold"
+                  >
+                    Auto
+                  </button>
+                )}
+              </div>
+            )}
+            <p className="text-[9px] text-rose-500 font-semibold mt-1">🔴 Compras Registradas</p>
           </div>
         </div>
 
-        {/* KPI 3 */}
-        <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex items-center gap-4">
-          <div className="w-12 h-12 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center">
-            <ArrowRightLeft className="w-6 h-6" />
+        {/* KPI 4: Fondo para Insumos */}
+        <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex items-center gap-4 min-h-[100px]">
+          <div className="w-12 h-12 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center shrink-0">
+            <Package className="w-6 h-6" />
           </div>
-          <div>
-            <p className="text-xs text-slate-400 font-medium uppercase tracking-wider">Gastos Operativos</p>
-            <h3 className="text-xl font-bold text-slate-900 mt-0.5">${totalExpenses.toLocaleString("es-AR", { minimumFractionDigits: 2 })}</h3>
-            <p className="text-[10px] text-indigo-500 font-semibold mt-1 flex items-center gap-0.5">🔵 Luz, gas, alquileres</p>
+          <div className="flex-1 min-w-0">
+            <p className="text-[10px] text-slate-400 font-medium uppercase tracking-wider">Fondo Insumos</p>
+            {isEditingFondo ? (
+              <div className="flex items-center gap-1 mt-1">
+                <span className="text-slate-400 font-bold">$</span>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={tempFondo}
+                  onChange={(e) => setTempFondo(e.target.value)}
+                  className="w-20 bg-slate-50 border border-slate-200 text-xs font-bold rounded px-1.5 py-0.5 text-slate-800 focus:outline-hidden focus:border-amber-400"
+                  autoFocus
+                />
+                <button
+                  onClick={() => {
+                    const val = parseFloat(tempFondo);
+                    if (!isNaN(val)) {
+                      localStorage.setItem("finanzaspro_override_fondo", val.toString());
+                      setOverrideFondo(val);
+                    } else {
+                      localStorage.removeItem("finanzaspro_override_fondo");
+                      setOverrideFondo(null);
+                    }
+                    setIsEditingFondo(false);
+                  }}
+                  className="p-0.5 bg-amber-50 hover:bg-amber-100 text-amber-600 rounded cursor-pointer"
+                >
+                  <Check className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  onClick={() => setIsEditingFondo(false)}
+                  className="p-0.5 bg-slate-100 hover:bg-slate-200 text-slate-500 rounded cursor-pointer"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-1 mt-0.5 group">
+                <h3 className={`text-base font-bold truncate ${displayFondo >= 0 ? "text-slate-900" : "text-rose-600"}`}>
+                  ${displayFondo.toLocaleString("es-AR", { minimumFractionDigits: 2 })}
+                </h3>
+                <button
+                  onClick={() => {
+                    setTempFondo(overrideFondo !== null ? overrideFondo.toString() : fondoInsumos.toFixed(2));
+                    setIsEditingFondo(true);
+                  }}
+                  className="p-0.5 text-slate-300 hover:text-amber-600 rounded transition-colors cursor-pointer shrink-0"
+                  title="Editar a mano"
+                >
+                  <Edit2 className="w-3 h-3" />
+                </button>
+                {overrideFondo !== null && (
+                  <button
+                    onClick={() => {
+                      localStorage.removeItem("finanzaspro_override_fondo");
+                      setOverrideFondo(null);
+                    }}
+                    className="text-[8px] text-amber-600 hover:underline font-bold"
+                  >
+                    Auto
+                  </button>
+                )}
+              </div>
+            )}
+            <p className="text-[9px] text-amber-600 font-semibold mt-1">📦 Reposición de Stock</p>
           </div>
         </div>
 
-        {/* KPI 4 */}
-        <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex items-center gap-4">
-          <div className="w-12 h-12 rounded-xl bg-slate-900 text-white flex items-center justify-center shadow-md">
+        {/* KPI 5: Caja Neta Libre */}
+        <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex items-center gap-4 min-h-[100px]">
+          <div className="w-12 h-12 rounded-xl bg-slate-900 text-white flex items-center justify-center shadow-md shrink-0">
             <DollarSign className="w-6 h-6 text-emerald-400" />
           </div>
-          <div>
-            <p className="text-xs text-slate-400 font-medium uppercase tracking-wider">Caja Neta Libre</p>
-            <h3 className={`text-xl font-bold mt-0.5 ${netCaja >= 0 ? "text-slate-900" : "text-rose-600"}`}>
-              ${netCaja.toLocaleString("es-AR", { minimumFractionDigits: 2 })}
-            </h3>
-            <p className="text-[10px] font-semibold mt-1 flex items-center gap-0.5">
-              {netCaja >= 0 ? "🟢 Balance positivo" : "⚠️ Saldo negativo"}
+          <div className="flex-1 min-w-0">
+            <p className="text-[10px] text-slate-400 font-medium uppercase tracking-wider">Caja Libre</p>
+            {isEditingCaja ? (
+              <div className="flex items-center gap-1 mt-1">
+                <span className="text-slate-400 font-bold">$</span>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={tempCaja}
+                  onChange={(e) => setTempCaja(e.target.value)}
+                  className="w-20 bg-slate-50 border border-slate-200 text-xs font-bold rounded px-1.5 py-0.5 text-slate-850 focus:outline-hidden focus:border-slate-400"
+                  autoFocus
+                />
+                <button
+                  onClick={() => {
+                    const val = parseFloat(tempCaja);
+                    if (!isNaN(val)) {
+                      localStorage.setItem("finanzaspro_override_caja", val.toString());
+                      setOverrideCaja(val);
+                    } else {
+                      localStorage.removeItem("finanzaspro_override_caja");
+                      setOverrideCaja(null);
+                    }
+                    setIsEditingCaja(false);
+                  }}
+                  className="p-0.5 bg-slate-200 hover:bg-slate-300 text-slate-900 rounded cursor-pointer"
+                >
+                  <Check className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  onClick={() => setIsEditingCaja(false)}
+                  className="p-0.5 bg-slate-100 hover:bg-slate-200 text-slate-500 rounded cursor-pointer"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-1 mt-0.5 group">
+                <h3 className={`text-base font-bold truncate ${displayCaja >= 0 ? "text-slate-900" : "text-rose-600"}`}>
+                  ${displayCaja.toLocaleString("es-AR", { minimumFractionDigits: 2 })}
+                </h3>
+                <button
+                  onClick={() => {
+                    setTempCaja(overrideCaja !== null ? overrideCaja.toString() : netCaja.toFixed(2));
+                    setIsEditingCaja(true);
+                  }}
+                  className="p-0.5 text-slate-300 hover:text-slate-600 rounded transition-colors cursor-pointer shrink-0"
+                  title="Editar a mano"
+                >
+                  <Edit2 className="w-3 h-3" />
+                </button>
+                {overrideCaja !== null && (
+                  <button
+                    onClick={() => {
+                      localStorage.removeItem("finanzaspro_override_caja");
+                      setOverrideCaja(null);
+                    }}
+                    className="text-[8px] text-slate-600 hover:underline font-bold"
+                  >
+                    Auto
+                  </button>
+                )}
+              </div>
+            )}
+            <p className="text-[9px] font-semibold mt-1 text-slate-500">
+              {displayCaja >= 0 ? "🟢 Balance Efectivo" : "⚠️ Saldo Negativo"}
             </p>
           </div>
         </div>
