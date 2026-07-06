@@ -6,7 +6,7 @@ const rawKey = (import.meta as any).env?.VITE_SUPABASE_ANON_KEY;
 
 const SUPABASE_URL = (typeof rawUrl === "string" && rawUrl.trim().startsWith("http"))
   ? rawUrl.trim()
-  : "https://kplblyjyxbtwugpmdujly.supabase.co";
+  : "https://kplblyjyxbtwugpmdujl.supabase.co";
 
 const SUPABASE_ANON_KEY = (typeof rawKey === "string" && rawKey.trim().length > 10 && !rawKey.trim().startsWith("YOUR_"))
   ? rawKey.trim()

@@ -18,5 +18,5 @@ export default defineConfig({
     hmr: process.env.DISABLE_HMR !== 'true',
     watch: process.env.DISABLE_HMR === 'true' ? null : {},
   },
-base: '/FinanzasPro/', // <-- AÑADE ESTA LÍNEA (con las barras diagonales)// <-- AÑADE ESTA LÍNEA (con las barras diagonales)
+  base: '/finanzas-/', // <-- ¡ESTA LÍNEA ES CLAVE para GitHub Pages!
 }); // <-- Corregido el cierre aquí (eliminamos la llave extra que rompía el código)
