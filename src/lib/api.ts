@@ -966,6 +966,59 @@ export const apiService = {
     const txs = getLocalItems<Transaction>("transactions");
     tx = txs.find(t => String(t.id) === String(id));
 
+    if (isCustomAuth()) {
+      if (!tx) {
+        try {
+          const allTxs = await this.getTransactions();
+          tx = allTxs.find(t => String(t.id) === String(id));
+        } catch (err) {
+          console.warn("Failed to fetch transaction from custom backend:", err);
+        }
+      }
+
+      // Restoring quantity if it was a Stock Update transaction
+      if (tx) {
+        const match = tx.description.match(/Compra de Materia Prima \(Actualización Stock\):\s*\+([\d.]+)\s*(\w+)?\s*de\s*(.+)/i);
+        if (match) {
+          const qtyAdded = parseFloat(match[1]);
+          const insumoName = match[3].trim();
+
+          const insumos = getLocalItems<Insumo>("insumos");
+          const insumoIdx = insumos.findIndex(i => i.name.toLowerCase() === insumoName.toLowerCase());
+          if (insumoIdx !== -1) {
+            const insumo = insumos[insumoIdx];
+            const newQty = Math.max(0, insumo.quantity - qtyAdded);
+            insumo.quantity = newQty;
+            insumos[insumoIdx] = insumo;
+            saveLocalItems("insumos", insumos);
+
+            try {
+              await this.updateInsumo(insumo.id, {
+                name: insumo.name,
+                quantity: newQty,
+                unit: insumo.unit,
+                totalCost: insumo.totalCost
+              });
+            } catch (err) {
+              console.warn("REST update for corrected stock failed:", err);
+            }
+          }
+        }
+      }
+
+      try {
+        await requestBackend<{ success: boolean }>(`/api/transactions/${id}`, {
+          method: "DELETE"
+        });
+        const filtered = txs.filter(t => String(t.id) !== String(id));
+        saveLocalItems("transactions", filtered);
+        return { success: true };
+      } catch (err: any) {
+        console.warn("REST deleteTransaction failed, falling back:", err);
+        throw err;
+      }
+    }
+
     if (!tx && currentUserId && currentUserId !== "local-demo-user") {
       try {
         const { data, error } = await supabase

@@ -224,141 +224,78 @@ export default function App() {
     }
     setIsAuthLoading(true);
     try {
-      const { data, error } = await supabase.auth.signUp({
-        email: emailInput.trim(),
-        password: passwordInput,
-        options: {
-          data: {
-            display_name: displayNameInput.trim(),
-            biz_name: bizNameInput.trim()
-          }
-        }
+      const response = await fetch("/api/auth/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: emailInput.trim(),
+          password: passwordInput,
+          displayName: displayNameInput.trim(),
+          bizName: bizNameInput.trim()
+        })
       });
-
-      if (error) {
-        throw error;
-      }
-
-      if (!data.user) {
-        throw new Error("No se pudo completar el registro.");
-      }
-
-      if (data.session) {
-        const displayName = data.user.user_metadata?.display_name || displayNameInput.trim();
-        const userBizName = data.user.user_metadata?.biz_name || bizNameInput.trim();
-
-        setApiAuth(data.session.access_token, data.user.id, userBizName);
+      const resData = await response.json();
+      if (response.ok && resData.success) {
+        localStorage.setItem("finanzas_pro_custom_token", resData.token);
+        localStorage.setItem("finanzas_pro_custom_user", JSON.stringify(resData.user));
+        
+        setApiAuth(resData.token, resData.user.uid, resData.user.bizName);
         setIsLocalMode(false);
-
         setUser({
           id: Date.now(),
-          uid: data.user.id,
-          email: data.user.email || "",
-          displayName: displayName,
-          bizName: userBizName
+          uid: resData.user.uid,
+          email: resData.user.email,
+          displayName: resData.user.displayName,
+          bizName: resData.user.bizName
         });
-        setBizName(userBizName);
-
+        setBizName(resData.user.bizName);
         setEmailInput("");
         setPasswordInput("");
         setDisplayNameInput("");
         setBizNameInput("");
-      } else {
-        setAuthSuccessMsg(`¡Registro exitoso! Te hemos enviado un correo de confirmación a ${emailInput.trim()}. Por favor, confirma tu cuenta desde el enlace en tu correo antes de iniciar sesión.`);
-        setAuthTab("login");
-        setPasswordInput("");
-      }
-    } catch (err: any) {
-      console.warn("Supabase signup failed. Trying custom backend fallback...", err);
-      try {
-        const response = await fetch("/api/auth/register", {
+        setAuthSuccessMsg("¡Registro exitoso! Tu cuenta ha sido creada en la nube y sincronizada.");
+        return;
+      } else if (resData.error && resData.error.includes("ya está registrado")) {
+        // If already registered, let's try to log them in instead
+        console.log("Email already registered. Attempting login...");
+        const loginResponse = await fetch("/api/auth/login", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             email: emailInput.trim(),
-            password: passwordInput,
-            displayName: displayNameInput.trim(),
-            bizName: bizNameInput.trim()
+            password: passwordInput
           })
         });
-        const resData = await response.json();
-        if (response.ok && resData.success) {
-          localStorage.setItem("finanzas_pro_custom_token", resData.token);
-          localStorage.setItem("finanzas_pro_custom_user", JSON.stringify(resData.user));
+        const loginData = await loginResponse.json();
+        if (loginResponse.ok && loginData.success) {
+          localStorage.setItem("finanzas_pro_custom_token", loginData.token);
+          localStorage.setItem("finanzas_pro_custom_user", JSON.stringify(loginData.user));
           
-          setApiAuth(resData.token, resData.user.uid, resData.user.bizName);
+          setApiAuth(loginData.token, loginData.user.uid, loginData.user.bizName);
           setIsLocalMode(false);
           setUser({
             id: Date.now(),
-            uid: resData.user.uid,
-            email: resData.user.email,
-            displayName: resData.user.displayName,
-            bizName: resData.user.bizName
+            uid: loginData.user.uid,
+            email: loginData.user.email,
+            displayName: loginData.user.displayName,
+            bizName: loginData.user.bizName
           });
-          setBizName(resData.user.bizName);
+          setBizName(loginData.user.bizName);
           setEmailInput("");
           setPasswordInput("");
           setDisplayNameInput("");
           setBizNameInput("");
-          setAuthSuccessMsg("¡Sesión iniciada con éxito mediante cuenta de respaldo!");
+          setAuthSuccessMsg("¡Sesión iniciada con éxito! Esta cuenta ya estaba registrada.");
           return;
-        } else if (resData.error && resData.error.includes("ya está registrado")) {
-          // If already registered, let's try to log them in instead
-          console.log("Email already registered in backup auth. Attempting login...");
-          const loginResponse = await fetch("/api/auth/login", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              email: emailInput.trim(),
-              password: passwordInput
-            })
-          });
-          const loginData = await loginResponse.json();
-          if (loginResponse.ok && loginData.success) {
-            localStorage.setItem("finanzas_pro_custom_token", loginData.token);
-            localStorage.setItem("finanzas_pro_custom_user", JSON.stringify(loginData.user));
-            
-            setApiAuth(loginData.token, loginData.user.uid, loginData.user.bizName);
-            setIsLocalMode(false);
-            setUser({
-              id: Date.now(),
-              uid: loginData.user.uid,
-              email: loginData.user.email,
-              displayName: loginData.user.displayName,
-              bizName: loginData.user.bizName
-            });
-            setBizName(loginData.user.bizName);
-            setEmailInput("");
-            setPasswordInput("");
-            setDisplayNameInput("");
-            setBizNameInput("");
-            setAuthSuccessMsg("¡Sesión iniciada con éxito mediante cuenta de respaldo!");
-            return;
-          } else {
-            throw new Error("Esta cuenta ya está registrada en el servidor de respaldo, pero la contraseña no coincide.");
-          }
         } else {
-          throw new Error(resData.error || "Fallo en el registro de respaldo.");
+          throw new Error("Esta cuenta ya está registrada, pero la contraseña no coincide.");
         }
-      } catch (fallbackErr: any) {
-        console.error("Custom backend fallback failed too:", fallbackErr);
-        console.warn("Sign up failed. Gracefully degrading to local mode to prevent block.");
-        setLocalModeOnly(true);
-        setIsLocalMode(true);
-        setUser({
-          id: Date.now(),
-          uid: "local-demo-user",
-          email: emailInput.trim(),
-          displayName: displayNameInput.trim() || "Usuario",
-          bizName: bizNameInput.trim() || "Mi Taller Gastronómico"
-        });
-        setBizName(bizNameInput.trim() || "Mi Taller Gastronómico");
-        setEmailInput("");
-        setPasswordInput("");
-        setDisplayNameInput("");
-        setBizNameInput("");
-        setAuthSuccessMsg("Hemos iniciado tu sesión en modo local automáticamente.");
+      } else {
+        throw new Error(resData.error || "Fallo en el registro.");
       }
+    } catch (err: any) {
+      console.error("Custom backend registration failed:", err);
+      setAuthError(err.message || "No se pudo registrar la cuenta en la nube. Por favor, intenta de nuevo.");
     } finally {
       setIsAuthLoading(false);
     }
@@ -375,125 +312,75 @@ export default function App() {
     }
     setIsAuthLoading(true);
     try {
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email: emailInput.trim(),
-        password: passwordInput
+      const response = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: emailInput.trim(),
+          password: passwordInput
+        })
       });
-
-      if (error) {
-        throw error;
-      }
-
-      if (!data.user) {
-        throw new Error("No se pudo iniciar sesión.");
-      }
-
-      const displayName = data.user.user_metadata?.display_name || data.user.email?.split("@")[0] || "Usuario";
-      const userBizName = data.user.user_metadata?.biz_name || "Mi Taller Gastronómico";
-
-      setApiAuth(data.session?.access_token || null, data.user.id, userBizName);
-      setIsLocalMode(false);
-
-      setUser({
-        id: Date.now(),
-        uid: data.user.id,
-        email: data.user.email || "",
-        displayName: displayName,
-        bizName: userBizName
-      });
-      setBizName(userBizName);
-
-      setEmailInput("");
-      setPasswordInput("");
-    } catch (err: any) {
-      console.warn("Supabase signin failed. Trying custom backend fallback...", err);
-      try {
-        const response = await fetch("/api/auth/login", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            email: emailInput.trim(),
-            password: passwordInput
-          })
-        });
-        const resData = await response.json();
-        if (response.ok && resData.success) {
-          localStorage.setItem("finanzas_pro_custom_token", resData.token);
-          localStorage.setItem("finanzas_pro_custom_user", JSON.stringify(resData.user));
-          
-          setApiAuth(resData.token, resData.user.uid, resData.user.bizName);
-          setIsLocalMode(false);
-          setUser({
-            id: Date.now(),
-            uid: resData.user.uid,
-            email: resData.user.email,
-            displayName: resData.user.displayName,
-            bizName: resData.user.bizName
-          });
-          setBizName(resData.user.bizName);
-          setEmailInput("");
-          setPasswordInput("");
-          setAuthSuccessMsg("¡Sesión iniciada con éxito mediante cuenta de respaldo!");
-          return;
-        } else {
-          // Auto-register in custom backend if they hit rate limits or unconfirmed emails on Supabase
-          const msg = err.message?.toLowerCase() || "";
-          const isRateOrConfirm = msg.includes("email not confirmed") || msg.includes("confirmar su correo") || msg.includes("confirm") || msg.includes("rate limit") || msg.includes("exceeded") || err.status === 429;
-          if (isRateOrConfirm) {
-            console.log("Supabase account rate limited or unconfirmed. Auto-registering a verified backup account...");
-            const regResponse = await fetch("/api/auth/register", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                email: emailInput.trim(),
-                password: passwordInput,
-                displayName: emailInput.trim().split("@")[0] || "Usuario",
-                bizName: "Mi Taller Gastronómico"
-              })
-            });
-            const regData = await regResponse.json();
-            if (regResponse.ok && regData.success) {
-              localStorage.setItem("finanzas_pro_custom_token", regData.token);
-              localStorage.setItem("finanzas_pro_custom_user", JSON.stringify(regData.user));
-              
-              setApiAuth(regData.token, regData.user.uid, regData.user.bizName);
-              setIsLocalMode(false);
-              setUser({
-                id: Date.now(),
-                uid: regData.user.uid,
-                email: regData.user.email,
-                displayName: regData.user.displayName,
-                bizName: regData.user.bizName
-              });
-              setBizName(regData.user.bizName);
-              setEmailInput("");
-              setPasswordInput("");
-              setAuthSuccessMsg("¡Sesión iniciada con éxito mediante cuenta de respaldo auto-verificada!");
-              return;
-            } else if (regData.error && regData.error.includes("ya está registrado")) {
-              throw new Error("Contraseña incorrecta para esta cuenta de respaldo.");
-            }
-          }
-          throw new Error(resData.error || "Fallo en la autenticación de respaldo.");
-        }
-      } catch (fallbackErr: any) {
-        console.error("Custom backend login fallback failed too:", fallbackErr);
-        console.warn("Sign in failed. Gracefully degrading to local mode to prevent block.");
-        setLocalModeOnly(true);
-        setIsLocalMode(true);
-        const demoName = emailInput.trim().split("@")[0] || "Usuario";
+      const resData = await response.json();
+      if (response.ok && resData.success) {
+        localStorage.setItem("finanzas_pro_custom_token", resData.token);
+        localStorage.setItem("finanzas_pro_custom_user", JSON.stringify(resData.user));
+        
+        setApiAuth(resData.token, resData.user.uid, resData.user.bizName);
+        setIsLocalMode(false);
         setUser({
           id: Date.now(),
-          uid: "local-demo-user",
-          email: emailInput.trim(),
-          displayName: demoName,
-          bizName: "Mi Taller Gastronómico"
+          uid: resData.user.uid,
+          email: resData.user.email,
+          displayName: resData.user.displayName,
+          bizName: resData.user.bizName
         });
-        setBizName("Mi Taller Gastronómico");
+        setBizName(resData.user.bizName);
         setEmailInput("");
         setPasswordInput("");
-        setAuthSuccessMsg("Hemos iniciado tu sesión en modo local automáticamente.");
+        setAuthSuccessMsg("¡Sesión iniciada con éxito!");
+        return;
+      } else {
+        // If they entered credentials but they aren't registered yet in our backup backend, let's offer auto-registration
+        if (resData.error && (resData.error.includes("incorrectos") || resData.error.includes("no encontrado") || resData.error.includes("no existe"))) {
+          console.log("Account not found. Automatically creating a secure cloud account for you...");
+          const regResponse = await fetch("/api/auth/register", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              email: emailInput.trim(),
+              password: passwordInput,
+              displayName: emailInput.trim().split("@")[0] || "Usuario",
+              bizName: "Mi Taller Gastronómico"
+            })
+          });
+          const regData = await regResponse.json();
+          if (regResponse.ok && regData.success) {
+            localStorage.setItem("finanzas_pro_custom_token", regData.token);
+            localStorage.setItem("finanzas_pro_custom_user", JSON.stringify(regData.user));
+            
+            setApiAuth(regData.token, regData.user.uid, regData.user.bizName);
+            setIsLocalMode(false);
+            setUser({
+              id: Date.now(),
+              uid: regData.user.uid,
+              email: regData.user.email,
+              displayName: regData.user.displayName,
+              bizName: regData.user.bizName
+            });
+            setBizName(regData.user.bizName);
+            setEmailInput("");
+            setPasswordInput("");
+            setAuthSuccessMsg("¡Bienvenido! Hemos registrado e iniciado sesión de tu cuenta en la nube automáticamente.");
+            return;
+          } else {
+            throw new Error(resData.error || "Correo o contraseña incorrectos.");
+          }
+        }
+        throw new Error(resData.error || "Error al iniciar sesión.");
       }
+    } catch (err: any) {
+      console.error("Custom backend login failed:", err);
+      setAuthError(err.message || "Fallo en la autenticación. Por favor, verifica tus datos.");
     } finally {
       setIsAuthLoading(false);
     }

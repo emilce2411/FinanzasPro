@@ -823,6 +823,25 @@ async function startServer() {
     }
   });
 
+  app.delete("/api/transactions/:id", requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const { id } = req.params;
+      const existing = await db.select()
+        .from(transactions)
+        .where(and(eq(transactions.id, parseInt(id)), eq(transactions.userId, req.user!.id)));
+
+      if (existing.length === 0) {
+        return res.status(404).json({ error: "Transacción no encontrada" });
+      }
+
+      await db.delete(transactions).where(eq(transactions.id, parseInt(id)));
+      res.json({ success: true });
+    } catch (error: any) {
+      console.error("Error deleting transaction:", error);
+      res.status(500).json({ error: "No se pudo eliminar la transacción" });
+    }
+  });
+
   // Checkout (Cart sales handler)
   app.post("/api/checkout", requireAuth, async (req: AuthRequest, res) => {
     try {
