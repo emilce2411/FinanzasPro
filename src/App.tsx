@@ -9,7 +9,6 @@ import Insumos from "./components/Insumos.tsx";
 import Fabricacion from "./components/Fabricacion.tsx";
 import ProductosCatalog from "./components/ProductosCatalog.tsx";
 import MapaClientes from "./components/MapaClientes.tsx";
-import Reportes from "./components/Reportes.tsx";
 
 import {
   Sparkles,
@@ -600,7 +599,7 @@ export default function App() {
               className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer ${activeTab === "ventas" ? "bg-slate-900 text-white shadow" : "text-slate-500 hover:text-slate-800 hover:bg-slate-50"}`}
             >
               <ShoppingBag className="w-3.5 h-3.5" />
-              Caja de Ventas
+              Ventas
             </button>
 
             <button
@@ -635,14 +634,6 @@ export default function App() {
               Georreferencia
             </button>
 
-            <button
-              onClick={() => setActiveTab("reportes")}
-              className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer ${activeTab === "reportes" ? "bg-slate-900 text-white shadow" : "text-slate-500 hover:text-slate-800 hover:bg-slate-50"}`}
-            >
-              <FileText className="w-3.5 h-3.5" />
-              Balances y Ledger
-            </button>
-
           </div>
         </div>
       </nav>
@@ -665,6 +656,7 @@ export default function App() {
           {activeTab === "ventas" && (
             <Ventas
               products={products}
+              transactions={transactions}
               onSaleComplete={loadAllData}
             />
           )}
@@ -697,13 +689,6 @@ export default function App() {
               clients={clients}
               onClientAdded={loadAllData}
               onClientDeleted={loadAllData}
-            />
-          )}
-
-          {activeTab === "reportes" && (
-            <Reportes
-              transactions={transactions}
-              onResetComplete={loadAllData}
             />
           )}
         </div>
