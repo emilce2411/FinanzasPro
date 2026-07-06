@@ -1,8 +1,16 @@
 import { createClient } from "@supabase/supabase-js";
 
 // Supabase credentials provided by the user (configured with fallbacks for local development)
-const SUPABASE_URL = (import.meta as any).env.VITE_SUPABASE_URL || "https://kplblyjyxbtwugpmdujly.supabase.co";
-const SUPABASE_ANON_KEY = (import.meta as any).env.VITE_SUPABASE_ANON_KEY || "sb_publishable_N714O3C1hPp9oP4Hxx1lGQ_HIW7clGZ";
+const rawUrl = (import.meta as any).env?.VITE_SUPABASE_URL;
+const rawKey = (import.meta as any).env?.VITE_SUPABASE_ANON_KEY;
+
+const SUPABASE_URL = (typeof rawUrl === "string" && rawUrl.trim().startsWith("http"))
+  ? rawUrl.trim()
+  : "https://kplblyjyxbtwugpmdujly.supabase.co";
+
+const SUPABASE_ANON_KEY = (typeof rawKey === "string" && rawKey.trim().length > 10 && !rawKey.trim().startsWith("YOUR_"))
+  ? rawKey.trim()
+  : "sb_publishable_N714O3C1hPp9oP4Hxx1lGQ_HIW7clGZ";
 
 /**
  * CLIENT-SIDE SUPABASE SECURITY WARNING:
