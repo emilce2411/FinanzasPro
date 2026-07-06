@@ -56,6 +56,26 @@ export function getIsLocalMode() {
   return isLocalMode;
 }
 
+export function isCustomAuth(): boolean {
+  return typeof currentToken === "string" && currentToken.includes(":");
+}
+
+export async function requestBackend<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "Authorization": `Bearer ${currentToken}`
+  };
+  if (options.headers) {
+    Object.assign(headers, options.headers);
+  }
+  const response = await fetch(path, { ...options, headers });
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+  }
+  return response.json();
+}
+
 export function getBizName() {
   if (isLocalMode) {
     return safeStorage.getItem(`es_biz_profile_user_${currentUserId}`) || "Emprendimiento Demo";
@@ -174,6 +194,15 @@ export const apiService = {
 
   // Insumos
   async getInsumos(): Promise<Insumo[]> {
+    if (isCustomAuth()) {
+      try {
+        const data = await requestBackend<Insumo[]>("/api/insumos");
+        saveLocalItems("insumos", data);
+        return data;
+      } catch (err) {
+        console.warn("REST getInsumos failed, falling back:", err);
+      }
+    }
     if (currentUserId && currentUserId !== "local-demo-user") {
       try {
         const { data, error } = await supabase
@@ -192,6 +221,20 @@ export const apiService = {
   },
 
   async createInsumo(data: { name: string; quantity: number; unit: string; totalCost: number }): Promise<Insumo> {
+    if (isCustomAuth()) {
+      try {
+        const inserted = await requestBackend<Insumo>("/api/insumos", {
+          method: "POST",
+          body: JSON.stringify(data)
+        });
+        const items = getLocalItems<Insumo>("insumos");
+        items.unshift(inserted);
+        saveLocalItems("insumos", items);
+        return inserted;
+      } catch (err) {
+        console.warn("REST createInsumo failed, falling back:", err);
+      }
+    }
     const unitCost = data.quantity > 0 ? data.totalCost / data.quantity : 0;
     const newInsumo: Insumo = {
       id: Date.now(),
@@ -238,6 +281,23 @@ export const apiService = {
   },
 
   async updateInsumo(id: number, data: { name: string; quantity: number; unit: string; totalCost: number }): Promise<Insumo> {
+    if (isCustomAuth()) {
+      try {
+        const updated = await requestBackend<Insumo>(`/api/insumos/${id}`, {
+          method: "PUT",
+          body: JSON.stringify(data)
+        });
+        const items = getLocalItems<Insumo>("insumos");
+        const idx = items.findIndex(i => i.id === id);
+        if (idx !== -1) {
+          items[idx] = updated;
+          saveLocalItems("insumos", items);
+        }
+        return updated;
+      } catch (err) {
+        console.warn("REST updateInsumo failed, falling back:", err);
+      }
+    }
     const unitCost = data.quantity > 0 ? data.totalCost / data.quantity : 0;
     const updates = {
       name: data.name,
@@ -312,6 +372,20 @@ export const apiService = {
   },
 
   async deleteInsumo(id: number): Promise<{ success: boolean }> {
+    if (isCustomAuth()) {
+      try {
+        await requestBackend<{ success: boolean }>(`/api/insumos/${id}`, {
+          method: "DELETE"
+        });
+        let items = getLocalItems<Insumo>("insumos");
+        items = items.filter(i => i.id !== id);
+        saveLocalItems("insumos", items);
+        return { success: true };
+      } catch (err: any) {
+        console.warn("REST deleteInsumo failed, falling back:", err);
+        throw err;
+      }
+    }
     // Check if ingredient is used in active recipes (local verification)
     const recs = getLocalItems<Recipe>("recipes");
     const isUsed = recs.some(r => r.ingredients.some(ing => ing.insumoId === id));
@@ -345,6 +419,15 @@ export const apiService = {
 
   // Recipes
   async getRecipes(): Promise<Recipe[]> {
+    if (isCustomAuth()) {
+      try {
+        const data = await requestBackend<Recipe[]>("/api/recipes");
+        saveLocalItems("recipes", data);
+        return data;
+      } catch (err) {
+        console.warn("REST getRecipes failed, falling back:", err);
+      }
+    }
     if (currentUserId && currentUserId !== "local-demo-user") {
       try {
         const { data, error } = await supabase
@@ -363,6 +446,20 @@ export const apiService = {
   },
 
   async createRecipe(data: { name: string; yield: number; marginPercent: number; ingredients: any[] }): Promise<Recipe> {
+    if (isCustomAuth()) {
+      try {
+        const inserted = await requestBackend<Recipe>("/api/recipes", {
+          method: "POST",
+          body: JSON.stringify(data)
+        });
+        const recs = getLocalItems<Recipe>("recipes");
+        recs.unshift(inserted);
+        saveLocalItems("recipes", recs);
+        return inserted;
+      } catch (err) {
+        console.warn("REST createRecipe failed, falling back:", err);
+      }
+    }
     const insList = getLocalItems<Insumo>("insumos");
 
     let totalCostOfIngredients = 0;
@@ -442,6 +539,19 @@ export const apiService = {
   },
 
   async deleteRecipe(id: number): Promise<{ success: boolean }> {
+    if (isCustomAuth()) {
+      try {
+        await requestBackend<{ success: boolean }>(`/api/recipes/${id}`, {
+          method: "DELETE"
+        });
+        let recs = getLocalItems<Recipe>("recipes");
+        recs = recs.filter(r => r.id !== id);
+        saveLocalItems("recipes", recs);
+        return { success: true };
+      } catch (err) {
+        console.warn("REST deleteRecipe failed, falling back:", err);
+      }
+    }
     if (currentUserId && currentUserId !== "local-demo-user") {
       try {
         const { error } = await supabase
@@ -468,6 +578,15 @@ export const apiService = {
 
   // Products
   async getProducts(): Promise<Product[]> {
+    if (isCustomAuth()) {
+      try {
+        const data = await requestBackend<Product[]>("/api/products");
+        saveLocalItems("products", data);
+        return data;
+      } catch (err) {
+        console.warn("REST getProducts failed, falling back:", err);
+      }
+    }
     if (currentUserId && currentUserId !== "local-demo-user") {
       try {
         const { data, error } = await supabase
@@ -491,6 +610,20 @@ export const apiService = {
   },
 
   async createProduct(data: { name: string; stock: number; price: number; priceWholesale?: number | null; pricePromo?: number | null; promoQty?: number | null; cost: number; recipeId?: number | null }): Promise<Product> {
+    if (isCustomAuth()) {
+      try {
+        const inserted = await requestBackend<Product>("/api/products", {
+          method: "POST",
+          body: JSON.stringify(data)
+        });
+        const prods = getLocalItems<Product>("products");
+        prods.unshift(inserted);
+        saveLocalItems("products", prods);
+        return inserted;
+      } catch (err) {
+        console.warn("REST createProduct failed, falling back:", err);
+      }
+    }
     const newProduct: Product = {
       id: Date.now(),
       recipeId: data.recipeId || null,
@@ -541,6 +674,23 @@ export const apiService = {
   },
 
   async updateProduct(id: number, data: { name?: string; stock?: number; price?: number; priceWholesale?: number | null; pricePromo?: number | null; promoQty?: number | null; cost?: number }): Promise<Product> {
+    if (isCustomAuth()) {
+      try {
+        const updated = await requestBackend<Product>(`/api/products/${id}`, {
+          method: "PUT",
+          body: JSON.stringify(data)
+        });
+        const prods = getLocalItems<Product>("products");
+        const idx = prods.findIndex(p => p.id === id);
+        if (idx !== -1) {
+          prods[idx] = updated;
+          saveLocalItems("products", prods);
+        }
+        return updated;
+      } catch (err) {
+        console.warn("REST updateProduct failed, falling back:", err);
+      }
+    }
     if (currentUserId && currentUserId !== "local-demo-user") {
       try {
         const updateData: any = { ...data };
@@ -603,6 +753,19 @@ export const apiService = {
   },
 
   async deleteProduct(id: number): Promise<{ success: boolean }> {
+    if (isCustomAuth()) {
+      try {
+        await requestBackend<{ success: boolean }>(`/api/products/${id}`, {
+          method: "DELETE"
+        });
+        let prods = getLocalItems<Product>("products");
+        prods = prods.filter(p => p.id !== id);
+        saveLocalItems("products", prods);
+        return { success: true };
+      } catch (err) {
+        console.warn("REST deleteProduct failed, falling back:", err);
+      }
+    }
     if (currentUserId && currentUserId !== "local-demo-user") {
       try {
         const { error } = await supabase
@@ -629,6 +792,24 @@ export const apiService = {
 
   // Fabricar Tanda (Taller Production)
   async executeFabricacion(recipeId: number, batches: number): Promise<any> {
+    if (isCustomAuth()) {
+      try {
+        const result = await requestBackend<any>("/api/fabricacion", {
+          method: "POST",
+          body: JSON.stringify({ recipeId, batches })
+        });
+        if (result && result.success) {
+          // Sync local caches
+          await this.getInsumos();
+          await this.getProducts();
+          await this.getTransactions();
+        }
+        return result;
+      } catch (err: any) {
+        console.warn("REST executeFabricacion failed, falling back:", err);
+        throw err;
+      }
+    }
     const recs = getLocalItems<Recipe>("recipes");
     const insList = getLocalItems<Insumo>("insumos");
     const prods = getLocalItems<Product>("products");
@@ -707,6 +888,15 @@ export const apiService = {
 
   // Transactions Ledger
   async getTransactions(): Promise<Transaction[]> {
+    if (isCustomAuth()) {
+      try {
+        const data = await requestBackend<Transaction[]>("/api/transactions");
+        saveLocalItems("transactions", data);
+        return data;
+      } catch (err) {
+        console.warn("REST getTransactions failed, falling back:", err);
+      }
+    }
     if (currentUserId && currentUserId !== "local-demo-user") {
       try {
         const { data, error } = await supabase
@@ -725,6 +915,20 @@ export const apiService = {
   },
 
   async createTransaction(data: { type: string; amount: number; description: string; date?: string }): Promise<Transaction> {
+    if (isCustomAuth()) {
+      try {
+        const inserted = await requestBackend<Transaction>("/api/transactions", {
+          method: "POST",
+          body: JSON.stringify(data)
+        });
+        const txs = getLocalItems<Transaction>("transactions");
+        txs.unshift(inserted);
+        saveLocalItems("transactions", txs);
+        return inserted;
+      } catch (err) {
+        console.warn("REST createTransaction failed, falling back:", err);
+      }
+    }
     const newTx: Transaction = {
       id: Date.now(),
       type: data.type as any,
@@ -827,6 +1031,23 @@ export const apiService = {
   },
 
   async checkoutCart(items: { productId: number; qty: number; selectedPriceType?: "public" | "wholesale" | "promo" }[], clientName?: string): Promise<any> {
+    if (isCustomAuth()) {
+      try {
+        const result = await requestBackend<any>("/api/checkout", {
+          method: "POST",
+          body: JSON.stringify({ items, clientName })
+        });
+        if (result && result.success) {
+          // Sync local caches
+          await this.getProducts();
+          await this.getTransactions();
+        }
+        return result;
+      } catch (err: any) {
+        console.warn("REST checkoutCart failed, falling back:", err);
+        throw err;
+      }
+    }
     const prods = getLocalItems<Product>("products");
     let totalSaleRevenue = 0;
     let totalCostInsumos = 0;
@@ -922,6 +1143,15 @@ export const apiService = {
 
   // Clients
   async getClients(): Promise<Client[]> {
+    if (isCustomAuth()) {
+      try {
+        const data = await requestBackend<Client[]>("/api/clients");
+        saveLocalItems("clients", data);
+        return data;
+      } catch (err) {
+        console.warn("REST getClients failed, falling back:", err);
+      }
+    }
     if (currentUserId && currentUserId !== "local-demo-user") {
       try {
         const { data, error } = await supabase
@@ -940,6 +1170,20 @@ export const apiService = {
   },
 
   async createClient(data: { name: string; phone?: string; email?: string; lat?: number; lng?: number }): Promise<Client> {
+    if (isCustomAuth()) {
+      try {
+        const inserted = await requestBackend<Client>("/api/clients", {
+          method: "POST",
+          body: JSON.stringify(data)
+        });
+        const list = getLocalItems<Client>("clients");
+        list.unshift(inserted);
+        saveLocalItems("clients", list);
+        return inserted;
+      } catch (err) {
+        console.warn("REST createClient failed, falling back:", err);
+      }
+    }
     const newClient: Client = {
       id: Date.now(),
       name: data.name,
@@ -974,6 +1218,19 @@ export const apiService = {
   },
 
   async deleteClient(id: number): Promise<{ success: boolean }> {
+    if (isCustomAuth()) {
+      try {
+        await requestBackend<{ success: boolean }>(`/api/clients/${id}`, {
+          method: "DELETE"
+        });
+        let list = getLocalItems<Client>("clients");
+        list = list.filter(c => c.id !== id);
+        saveLocalItems("clients", list);
+        return { success: true };
+      } catch (err) {
+        console.warn("REST deleteClient failed, falling back:", err);
+      }
+    }
     if (currentUserId && currentUserId !== "local-demo-user") {
       try {
         const { error } = await supabase
