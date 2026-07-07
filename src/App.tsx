@@ -58,10 +58,70 @@ export default function App() {
   const [authSuccessMsg, setAuthSuccessMsg] = useState("");
   const [isResending, setIsResending] = useState(false);
   const [resendSuccess, setResendSuccess] = useState("");
+  const [hasLocalDataToMigrate, setHasLocalDataToMigrate] = useState(false);
+  const [isMigrating, setIsMigrating] = useState(false);
+  const [migrationSuccess, setMigrationSuccess] = useState<string | null>(null);
 
   // Navigation state
   const [activeTab, setActiveTab] = useState("ventas");
   const [systemError, setSystemError] = useState("");
+
+  const checkLocalData = () => {
+    try {
+      const insKey = `es_biz_insumos_user_local-demo-user`;
+      const recKey = `es_biz_recipes_user_local-demo-user`;
+      const txKey = `es_biz_transactions_user_local-demo-user`;
+      const cliKey = `es_biz_clients_user_local-demo-user`;
+      
+      const hasIns = localStorage.getItem(insKey);
+      const hasRec = localStorage.getItem(recKey);
+      const hasTx = localStorage.getItem(txKey);
+      const hasCli = localStorage.getItem(cliKey);
+
+      if (hasIns || hasRec || hasTx || hasCli) {
+        setHasLocalDataToMigrate(true);
+      } else {
+        setHasLocalDataToMigrate(false);
+      }
+    } catch (e) {
+      console.warn("Could not check local storage for migration:", e);
+    }
+  };
+
+  const handleMigrateData = async () => {
+    setIsMigrating(true);
+    setMigrationSuccess(null);
+    try {
+      const res = await apiService.migrateLocalDataToCloud();
+      if (res.success) {
+        setMigrationSuccess(
+          `¡Excelente! Se han migrado todos tus datos de forma segura a la base de datos de la nube: ${res.stats.insumos} insumos, ${res.stats.recipes} recetas de fabricación, ${res.stats.products} productos, ${res.stats.transactions} transacciones/ventas y ${res.stats.clients} ubicaciones de georreferencia.`
+        );
+        setHasLocalDataToMigrate(false);
+        await loadAllData();
+      }
+    } catch (err: any) {
+      console.error("Migration failed:", err);
+      setSystemError("No se pudieron migrar los datos locales a la base de datos PostgreSQL.");
+    } finally {
+      setIsMigrating(false);
+    }
+  };
+
+  const handleDismissMigration = () => {
+    try {
+      localStorage.removeItem(`es_biz_insumos_user_local-demo-user`);
+      localStorage.removeItem(`es_biz_recipes_user_local-demo-user`);
+      localStorage.removeItem(`es_biz_products_user_local-demo-user`);
+      localStorage.removeItem(`es_biz_transactions_user_local-demo-user`);
+      localStorage.removeItem(`es_biz_clients_user_local-demo-user`);
+      localStorage.removeItem(`es_biz_profile_user_local-demo-user`);
+      localStorage.setItem(`es_biz_is_seeded_user_local-demo-user`, "true");
+      setHasLocalDataToMigrate(false);
+    } catch (e) {
+      console.warn("Could not dismiss migration:", e);
+    }
+  };
 
   // Synchronize all data pools
   const loadAllData = async () => {
@@ -81,6 +141,10 @@ export default function App() {
       setClients(clientsList);
 
       setBizName(getBizName());
+
+      if (user && user.uid !== "local-demo-user" && !isLocalMode) {
+        checkLocalData();
+      }
     } catch (err: any) {
       console.error("Error loading data streams:", err);
       setSystemError("No se pudo cargar la base de datos de PostgreSQL en la nube.");
@@ -674,6 +738,43 @@ export default function App() {
             className="underline text-[10px] hover:text-indigo-900 font-bold uppercase tracking-wider ml-1 cursor-pointer"
           >
             Sincronizar con la Nube (Google)
+          </button>
+        </div>
+      )}
+
+      {!isLocalMode && hasLocalDataToMigrate && (
+        <div className="bg-amber-50 text-amber-900 border-b border-amber-200 px-4 py-3 text-center text-xs font-semibold flex flex-col sm:flex-row items-center justify-center gap-3 animate-in fade-in slide-in-from-top-1">
+          <div className="flex items-center justify-center gap-2">
+            <CloudLightning className="w-4 h-4 text-amber-500 animate-pulse shrink-0" />
+            <span>⚠️ Se detectaron datos locales sin sincronizar (ventas, despensa de insumos, taller de fabricación, productos finales y georreferencia). ¿Deseas migrarlos a tu base de datos en la nube?</span>
+          </div>
+          <div className="flex items-center gap-2 justify-center">
+            <button
+              onClick={handleMigrateData}
+              disabled={isMigrating}
+              className="bg-amber-600 hover:bg-amber-700 active:bg-amber-800 text-white font-bold py-1 px-3.5 rounded-lg text-[10px] transition-all cursor-pointer uppercase tracking-wider shadow-xs disabled:opacity-50"
+            >
+              {isMigrating ? "Migrando..." : "📤 Migrar Datos"}
+            </button>
+            <button
+              onClick={handleDismissMigration}
+              className="text-amber-600 hover:text-amber-800 text-[10px] font-bold uppercase tracking-wider px-2 cursor-pointer"
+            >
+              Descartar
+            </button>
+          </div>
+        </div>
+      )}
+
+      {migrationSuccess && (
+        <div className="bg-emerald-50 text-emerald-800 border-b border-emerald-200 px-4 py-3 text-center text-xs font-semibold flex items-center justify-center gap-2 animate-in fade-in slide-in-from-top-1">
+          <Check className="w-4 h-4 text-emerald-600 shrink-0 font-bold" />
+          <span>{migrationSuccess}</span>
+          <button
+            onClick={() => setMigrationSuccess(null)}
+            className="text-emerald-600 hover:text-emerald-800 text-[10px] font-bold uppercase ml-2 underline cursor-pointer"
+          >
+            Aceptar
           </button>
         </div>
       )}

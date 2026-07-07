@@ -1348,5 +1348,171 @@ export const apiService = {
 
     tips += `Tus datos de ventas y gastos se vinculan de manera segura a tu ID de usuario de Supabase (\`${currentUserId}\`) de forma totalmente aislada.`;
     return tips;
+  },
+
+  async migrateLocalDataToCloud(): Promise<{ success: boolean; stats: any }> {
+    if (isLocalMode) {
+      throw new Error("Debe iniciar sesión para migrar los datos a la nube.");
+    }
+    
+    const localInsumos = getLocalItems<Insumo>("insumos");
+    const localRecipes = getLocalItems<Recipe>("recipes");
+    const localProducts = getLocalItems<Product>("products");
+    const localTransactions = getLocalItems<Transaction>("transactions");
+    const localClients = getLocalItems<Client>("clients");
+
+    const stats = {
+      insumos: 0,
+      recipes: 0,
+      products: 0,
+      transactions: 0,
+      clients: 0
+    };
+
+    const insumoIdMap: Record<number, number> = {};
+    const recipeIdMap: Record<number, number> = {};
+
+    // 1. Migrate Insumos (Despensa de insumos)
+    const existingCloudInsumos = await this.getInsumos();
+    for (const ins of localInsumos) {
+      try {
+        const duplicate = existingCloudInsumos.find(c => c.name.toLowerCase().trim() === ins.name.toLowerCase().trim());
+        if (duplicate) {
+          insumoIdMap[ins.id] = duplicate.id;
+        } else {
+          const created = await this.createInsumo({
+            name: ins.name,
+            quantity: ins.quantity,
+            unit: ins.unit,
+            totalCost: ins.totalCost
+          });
+          insumoIdMap[ins.id] = created.id;
+          stats.insumos++;
+        }
+      } catch (err) {
+        console.error("Error migrating insumo:", ins.name, err);
+      }
+    }
+
+    // 2. Migrate Recipes (Taller de fabricación)
+    const existingCloudRecipes = await this.getRecipes();
+    for (const rec of localRecipes) {
+      try {
+        const duplicate = existingCloudRecipes.find(r => r.name.toLowerCase().trim() === rec.name.toLowerCase().trim());
+        if (duplicate) {
+          recipeIdMap[rec.id] = duplicate.id;
+        } else {
+          const mappedIngredients = (rec.ingredients || []).map(ing => ({
+            insumoId: insumoIdMap[ing.insumoId] || ing.insumoId,
+            quantityUsed: ing.quantityUsed
+          })).filter(ing => !!ing.insumoId);
+
+          const created = await this.createRecipe({
+            name: rec.name,
+            yield: rec.yield,
+            marginPercent: rec.marginPercent,
+            ingredients: mappedIngredients
+          });
+          recipeIdMap[rec.id] = created.id;
+          stats.recipes++;
+        }
+      } catch (err) {
+        console.error("Error migrating recipe:", rec.name, err);
+      }
+    }
+
+    // 3. Migrate Products (Producto final)
+    const existingCloudProducts = await this.getProducts();
+    for (const prod of localProducts) {
+      try {
+        const duplicate = existingCloudProducts.find(p => p.name.toLowerCase().trim() === prod.name.toLowerCase().trim());
+        const mappedRecipeId = prod.recipeId ? (recipeIdMap[prod.recipeId] || null) : null;
+
+        if (duplicate) {
+          await this.updateProduct(duplicate.id, {
+            stock: prod.stock,
+            price: prod.price,
+            priceWholesale: prod.priceWholesale,
+            pricePromo: prod.pricePromo,
+            promoQty: prod.promoQty,
+            cost: prod.cost
+          });
+          stats.products++;
+        } else {
+          await this.createProduct({
+            name: prod.name,
+            stock: prod.stock,
+            price: prod.price,
+            priceWholesale: prod.priceWholesale,
+            pricePromo: prod.pricePromo,
+            promoQty: prod.promoQty,
+            cost: prod.cost,
+            recipeId: mappedRecipeId
+          });
+          stats.products++;
+        }
+      } catch (err) {
+        console.error("Error migrating product:", prod.name, err);
+      }
+    }
+
+    // 4. Migrate Transactions (Ventas y caja ledger)
+    const existingCloudTx = await this.getTransactions();
+    for (const tx of localTransactions) {
+      try {
+        const isDuplicate = existingCloudTx.some(t => 
+          t.type === tx.type && 
+          Math.abs(t.amount - tx.amount) < 0.01 && 
+          t.date === tx.date &&
+          t.description.toLowerCase().trim() === tx.description.toLowerCase().trim()
+        );
+
+        if (!isDuplicate) {
+          await this.createTransaction({
+            type: tx.type,
+            amount: tx.amount,
+            description: tx.description,
+            date: tx.date
+          });
+          stats.transactions++;
+        }
+      } catch (err) {
+        console.error("Error migrating transaction:", tx.description, err);
+      }
+    }
+
+    // 5. Migrate Clients (Georreferencia)
+    const existingCloudClients = await this.getClients();
+    for (const cli of localClients) {
+      try {
+        const isDuplicate = existingCloudClients.some(c => 
+          c.name.toLowerCase().trim() === cli.name.toLowerCase().trim()
+        );
+
+        if (!isDuplicate) {
+          await this.createClient({
+            name: cli.name,
+            phone: cli.phone || undefined,
+            email: cli.email || undefined,
+            lat: cli.lat || undefined,
+            lng: cli.lng || undefined
+          });
+          stats.clients++;
+        }
+      } catch (err) {
+        console.error("Error migrating client:", cli.name, err);
+      }
+    }
+
+    // Clear local storage for default local user & actual users to prevent repeat prompts
+    safeStorage.removeItem(`es_biz_insumos_user_local-demo-user`);
+    safeStorage.removeItem(`es_biz_recipes_user_local-demo-user`);
+    safeStorage.removeItem(`es_biz_products_user_local-demo-user`);
+    safeStorage.removeItem(`es_biz_transactions_user_local-demo-user`);
+    safeStorage.removeItem(`es_biz_clients_user_local-demo-user`);
+    safeStorage.removeItem(`es_biz_profile_user_local-demo-user`);
+    safeStorage.setItem(`es_biz_is_seeded_user_local-demo-user`, "true");
+
+    return { success: true, stats };
   }
 };
