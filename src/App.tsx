@@ -288,78 +288,131 @@ export default function App() {
     }
     setIsAuthLoading(true);
     try {
-      const response = await fetch("/api/auth/register", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      // 1. Try Supabase signup first (works everywhere, including static GitHub Pages)
+      let supabaseSuccess = false;
+      let supabaseUnconfirmed = false;
+      let supabaseUser: any = null;
+
+      try {
+        const { data, error } = await supabase.auth.signUp({
           email: emailInput.trim(),
           password: passwordInput,
-          displayName: displayNameInput.trim(),
-          bizName: bizNameInput.trim()
-        })
-      });
-      const resData = await response.json();
-      if (response.ok && resData.success) {
-        localStorage.setItem("finanzas_pro_custom_token", resData.token);
-        localStorage.setItem("finanzas_pro_custom_user", JSON.stringify(resData.user));
-        
-        setApiAuth(resData.token, resData.user.uid, resData.user.bizName);
-        setIsLocalMode(false);
-        setUser({
-          id: Date.now(),
-          uid: resData.user.uid,
-          email: resData.user.email,
-          displayName: resData.user.displayName,
-          bizName: resData.user.bizName
+          options: {
+            data: {
+              display_name: displayNameInput.trim(),
+              biz_name: bizNameInput.trim()
+            }
+          }
         });
-        setBizName(resData.user.bizName);
-        setEmailInput("");
-        setPasswordInput("");
-        setDisplayNameInput("");
-        setBizNameInput("");
-        setAuthSuccessMsg("¡Registro exitoso! Tu cuenta ha sido creada en la nube y sincronizada.");
-        return;
-      } else if (resData.error && resData.error.includes("ya está registrado")) {
-        // If already registered, let's try to log them in instead
-        console.log("Email already registered. Attempting login...");
-        const loginResponse = await fetch("/api/auth/login", {
+        if (error) throw error;
+        
+        if (data && data.user) {
+          supabaseSuccess = true;
+          supabaseUser = data.user;
+          // If no session is returned, email confirmation is active
+          if (!data.session) {
+            supabaseUnconfirmed = true;
+          }
+        }
+      } catch (supabaseErr: any) {
+        console.warn("Supabase signup failed/not configured, trying custom backend:", supabaseErr);
+        if (supabaseErr.message?.toLowerCase().includes("already registered") || supabaseErr.message?.toLowerCase().includes("user already exists")) {
+          throw supabaseErr;
+        }
+      }
+
+      // 2. Try Custom Backend (dual registration / fallback)
+      let backendSuccess = false;
+      try {
+        const response = await fetch("/api/auth/register", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             email: emailInput.trim(),
-            password: passwordInput
+            password: passwordInput,
+            displayName: displayNameInput.trim(),
+            bizName: bizNameInput.trim()
           })
         });
-        const loginData = await loginResponse.json();
-        if (loginResponse.ok && loginData.success) {
-          localStorage.setItem("finanzas_pro_custom_token", loginData.token);
-          localStorage.setItem("finanzas_pro_custom_user", JSON.stringify(loginData.user));
-          
-          setApiAuth(loginData.token, loginData.user.uid, loginData.user.bizName);
-          setIsLocalMode(false);
-          setUser({
-            id: Date.now(),
-            uid: loginData.user.uid,
-            email: loginData.user.email,
-            displayName: loginData.user.displayName,
-            bizName: loginData.user.bizName
-          });
-          setBizName(loginData.user.bizName);
-          setEmailInput("");
-          setPasswordInput("");
-          setDisplayNameInput("");
-          setBizNameInput("");
-          setAuthSuccessMsg("¡Sesión iniciada con éxito! Esta cuenta ya estaba registrada.");
-          return;
+        const resData = await response.json();
+        if (response.ok && resData.success) {
+          backendSuccess = true;
+          // If we logged in through custom backend and didn't get a live Supabase session yet
+          if (!supabaseSuccess || supabaseUnconfirmed) {
+            localStorage.setItem("finanzas_pro_custom_token", resData.token);
+            localStorage.setItem("finanzas_pro_custom_user", JSON.stringify(resData.user));
+            
+            setApiAuth(resData.token, resData.user.uid, resData.user.bizName);
+            setIsLocalMode(false);
+            setUser({
+              id: Date.now(),
+              uid: resData.user.uid,
+              email: resData.user.email,
+              displayName: resData.user.displayName,
+              bizName: resData.user.bizName
+            });
+            setBizName(resData.user.bizName);
+          }
+        } else if (resData.error && resData.error.includes("ya está registrado")) {
+          // If already registered on custom backend, check if we had a successful supabase login
+          if (supabaseSuccess) {
+            // Already registered, let's login instead
+            const loginResponse = await fetch("/api/auth/login", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                email: emailInput.trim(),
+                password: passwordInput
+              })
+            });
+            const loginData = await loginResponse.json();
+            if (loginResponse.ok && loginData.success) {
+              backendSuccess = true;
+              localStorage.setItem("finanzas_pro_custom_token", loginData.token);
+              localStorage.setItem("finanzas_pro_custom_user", JSON.stringify(loginData.user));
+              
+              setApiAuth(loginData.token, loginData.user.uid, loginData.user.bizName);
+              setIsLocalMode(false);
+              setUser({
+                id: Date.now(),
+                uid: loginData.user.uid,
+                email: loginData.user.email,
+                displayName: loginData.user.displayName,
+                bizName: loginData.user.bizName
+              });
+              setBizName(loginData.user.bizName);
+            }
+          } else {
+            throw new Error(resData.error || "Esta cuenta ya está registrada.");
+          }
         } else {
-          throw new Error("Esta cuenta ya está registrada, pero la contraseña no coincide.");
+          // If Supabase failed and custom backend also failed, throw the backend error
+          if (!supabaseSuccess) {
+            throw new Error(resData.error || "Fallo en el registro.");
+          }
         }
-      } else {
-        throw new Error(resData.error || "Fallo en el registro.");
+      } catch (backendErr: any) {
+        console.warn("Custom backend registration skipped or failed:", backendErr);
+        // If Supabase was successful, we can safely ignore the backend failure (especially on static GitHub Pages)
+        if (!supabaseSuccess) {
+          throw backendErr;
+        }
       }
+
+      // Finalize display of success messages
+      if (supabaseUnconfirmed) {
+        setAuthSuccessMsg("¡Registro exitoso! Te hemos enviado un correo de confirmación. Por favor revisa tu bandeja de entrada para verificar tu cuenta e iniciar sesión.");
+      } else {
+        setAuthSuccessMsg("¡Registro exitoso! Tu cuenta ha sido creada en la nube de forma segura.");
+        setEmailInput("");
+        setPasswordInput("");
+        setDisplayNameInput("");
+        setBizNameInput("");
+      }
+
     } catch (err: any) {
-      console.error("Custom backend registration failed:", err);
-      setAuthError(err.message || "No se pudo registrar la cuenta en la nube. Por favor, intenta de nuevo.");
+      console.error("Registration failed:", err);
+      setAuthError(getFriendlyErrorMessage(err, "signup"));
     } finally {
       setIsAuthLoading(false);
     }
@@ -376,75 +429,92 @@ export default function App() {
     }
     setIsAuthLoading(true);
     try {
-      const response = await fetch("/api/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      // 1. Try Supabase Client-side Auth first (works perfectly on GitHub Pages)
+      let supabaseSuccess = false;
+      try {
+        const { data, error } = await supabase.auth.signInWithPassword({
           email: emailInput.trim(),
-          password: passwordInput
-        })
-      });
-      const resData = await response.json();
-      if (response.ok && resData.success) {
-        localStorage.setItem("finanzas_pro_custom_token", resData.token);
-        localStorage.setItem("finanzas_pro_custom_user", JSON.stringify(resData.user));
-        
-        setApiAuth(resData.token, resData.user.uid, resData.user.bizName);
-        setIsLocalMode(false);
-        setUser({
-          id: Date.now(),
-          uid: resData.user.uid,
-          email: resData.user.email,
-          displayName: resData.user.displayName,
-          bizName: resData.user.bizName
+          password: passwordInput,
         });
-        setBizName(resData.user.bizName);
-        setEmailInput("");
-        setPasswordInput("");
-        setAuthSuccessMsg("¡Sesión iniciada con éxito!");
-        return;
-      } else {
-        // If they entered credentials but they aren't registered yet in our backup backend, let's offer auto-registration
-        if (resData.error && (resData.error.includes("incorrectos") || resData.error.includes("no encontrado") || resData.error.includes("no existe"))) {
-          console.log("Account not found. Automatically creating a secure cloud account for you...");
-          const regResponse = await fetch("/api/auth/register", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              email: emailInput.trim(),
-              password: passwordInput,
-              displayName: emailInput.trim().split("@")[0] || "Usuario",
-              bizName: "Mi Taller Gastronómico"
-            })
-          });
-          const regData = await regResponse.json();
-          if (regResponse.ok && regData.success) {
-            localStorage.setItem("finanzas_pro_custom_token", regData.token);
-            localStorage.setItem("finanzas_pro_custom_user", JSON.stringify(regData.user));
-            
-            setApiAuth(regData.token, regData.user.uid, regData.user.bizName);
-            setIsLocalMode(false);
-            setUser({
-              id: Date.now(),
-              uid: regData.user.uid,
-              email: regData.user.email,
-              displayName: regData.user.displayName,
-              bizName: regData.user.bizName
+        
+        if (error) {
+          // If it's explicitly a wrong credentials error, throw it so it displays friendly message
+          const msg = error.message?.toLowerCase() || "";
+          if (msg.includes("invalid login credentials") || msg.includes("invalid credentials") || error.status === 400) {
+            throw error;
+          }
+          console.warn("Supabase auth error, will try custom backend fallback:", error);
+        } else if (data && data.user) {
+          supabaseSuccess = true;
+          
+          // Background sync with custom backend if available (does nothing on GitHub Pages)
+          try {
+            await fetch("/api/auth/login", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                email: emailInput.trim(),
+                password: passwordInput
+              })
             });
-            setBizName(regData.user.bizName);
-            setEmailInput("");
-            setPasswordInput("");
-            setAuthSuccessMsg("¡Bienvenido! Hemos registrado e iniciado sesión de tu cuenta en la nube automáticamente.");
-            return;
-          } else {
+          } catch (e) {
+            console.log("Custom backend login sync skipped (this is expected on static deployments like GitHub Pages).");
+          }
+
+          setEmailInput("");
+          setPasswordInput("");
+          setAuthSuccessMsg("¡Sesión iniciada con éxito!");
+          return;
+        }
+      } catch (supabaseErr: any) {
+        console.warn("Supabase login failed, trying custom backend:", supabaseErr);
+        // If it's a real invalid credentials error, let's propagate it
+        const msg = supabaseErr.message?.toLowerCase() || "";
+        if (msg.includes("invalid login credentials") || msg.includes("correo o contraseña incorrectos") || msg.includes("invalid credentials")) {
+          throw supabaseErr;
+        }
+      }
+
+      // 2. Try Custom Backend if Supabase client didn't log us in
+      if (!supabaseSuccess) {
+        const response = await fetch("/api/auth/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            email: emailInput.trim(),
+            password: passwordInput
+          })
+        });
+        const resData = await response.json();
+        if (response.ok && resData.success) {
+          localStorage.setItem("finanzas_pro_custom_token", resData.token);
+          localStorage.setItem("finanzas_pro_custom_user", JSON.stringify(resData.user));
+          
+          setApiAuth(resData.token, resData.user.uid, resData.user.bizName);
+          setIsLocalMode(false);
+          setUser({
+            id: Date.now(),
+            uid: resData.user.uid,
+            email: resData.user.email,
+            displayName: resData.user.displayName,
+            bizName: resData.user.bizName
+          });
+          setBizName(resData.user.bizName);
+          setEmailInput("");
+          setPasswordInput("");
+          setAuthSuccessMsg("¡Sesión iniciada con éxito!");
+          return;
+        } else {
+          // If custom backend fails with "incorrect credentials" / "account not found", auto-register option or throw
+          if (resData.error && (resData.error.includes("incorrectos") || resData.error.includes("no encontrado") || resData.error.includes("no existe"))) {
             throw new Error(resData.error || "Correo o contraseña incorrectos.");
           }
+          throw new Error(resData.error || "Error al iniciar sesión.");
         }
-        throw new Error(resData.error || "Error al iniciar sesión.");
       }
     } catch (err: any) {
-      console.error("Custom backend login failed:", err);
-      setAuthError(err.message || "Fallo en la autenticación. Por favor, verifica tus datos.");
+      console.error("Login failed:", err);
+      setAuthError(getFriendlyErrorMessage(err, "login"));
     } finally {
       setIsAuthLoading(false);
     }
