@@ -277,6 +277,14 @@ export default function App() {
     }
   };
 
+  const safeParseJson = async (response: Response): Promise<any> => {
+    const contentType = response.headers.get("content-type") || "";
+    if (!contentType.includes("application/json")) {
+      throw new Error("El backend de PostgreSQL no está disponible en este entorno estático. Por favor, inicia sesión o regístrate con tu cuenta de Supabase.");
+    }
+    return response.json();
+  };
+
   const handleEmailSignUp = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError("");
@@ -334,7 +342,7 @@ export default function App() {
             bizName: bizNameInput.trim()
           })
         });
-        const resData = await response.json();
+        const resData = await safeParseJson(response);
         if (response.ok && resData.success) {
           backendSuccess = true;
           // If we logged in through custom backend and didn't get a live Supabase session yet
@@ -365,7 +373,7 @@ export default function App() {
                 password: passwordInput
               })
             });
-            const loginData = await loginResponse.json();
+            const loginData = await safeParseJson(loginResponse);
             if (loginResponse.ok && loginData.success) {
               backendSuccess = true;
               localStorage.setItem("finanzas_pro_custom_token", loginData.token);
@@ -485,7 +493,7 @@ export default function App() {
             password: passwordInput
           })
         });
-        const resData = await response.json();
+        const resData = await safeParseJson(response);
         if (response.ok && resData.success) {
           localStorage.setItem("finanzas_pro_custom_token", resData.token);
           localStorage.setItem("finanzas_pro_custom_user", JSON.stringify(resData.user));

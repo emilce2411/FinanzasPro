@@ -70,8 +70,15 @@ export async function requestBackend<T>(path: string, options: RequestInit = {})
   }
   const response = await fetch(path, { ...options, headers });
   if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+    const contentType = response.headers.get("content-type") || "";
+    const errorData = contentType.includes("application/json")
+      ? await response.json().catch(() => ({}))
+      : {};
+    throw new Error(errorData.error || `Error del servidor (status: ${response.status})`);
+  }
+  const contentType = response.headers.get("content-type") || "";
+  if (!contentType.includes("application/json")) {
+    throw new Error("El backend de PostgreSQL no está disponible en este entorno estático.");
   }
   return response.json();
 }
