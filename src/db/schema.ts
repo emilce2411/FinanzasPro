@@ -1,4 +1,4 @@
-import { pgTable, serial, text, integer, timestamp, real } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, integer, timestamp, real, uuid, varchar, numeric, boolean, date, unique } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 
 // 1. Users table (linked to Firebase UID)
@@ -13,7 +13,7 @@ export const users = pgTable("users", {
 });
 
 // 2. Insumos table (Raw materials)
-export const insumos = pgTable("insumos", {
+export const insumos = pgTable("insumos_legacy", {
   id: serial("id").primaryKey(),
   userId: integer("user_id")
     .references(() => users.id, { onDelete: "cascade" })
@@ -126,3 +126,111 @@ export const insumosRelations = relations(insumos, ({ one, many }) => ({
   user: one(users, { fields: [insumos.userId], references: [users.id] }),
   recipeIngredients: many(recipeIngredients),
 }));
+
+// ==========================================
+// NEW SQL SCHEMAS REQUESTED BY THE USER
+// ==========================================
+
+// 1. USUARIOS Y AUTENTICACIÓN
+export const usuariosSql = pgTable("usuarios", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  nombre: varchar("nombre", { length: 100 }).notNull(),
+  email: varchar("email", { length: 150 }).notNull().unique(),
+  passwordHash: varchar("password_hash", { length: 255 }),
+  rol: varchar("rol", { length: 20 }).default("admin"), // 'admin', 'empleado'
+  creadoEn: timestamp("creado_en", { withTimezone: true }).defaultNow(),
+});
+
+// 2. CLIENTES (Con geolocalización para Leaflet)
+export const clientesSql = pgTable("clientes", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  usuarioId: uuid("usuario_id").references(() => usuariosSql.id, { onDelete: "cascade" }),
+  nombre: varchar("nombre", { length: 100 }).notNull(),
+  telefono: varchar("telefono", { length: 30 }),
+  email: varchar("email", { length: 150 }),
+  direccion: text("direccion"),
+  latitud: numeric("latitud", { precision: 10, scale: 8 }),   // Para mapas/Leaflet
+  longitud: numeric("longitud", { precision: 11, scale: 8 }),  // Para mapas/Leaflet
+  creadoEn: timestamp("creado_en", { withTimezone: true }).defaultNow(),
+});
+
+// 3. INSUMOS Y MATERIA PRIMA
+export const insumosSql = pgTable("insumos", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  usuarioId: uuid("usuario_id").references(() => usuariosSql.id, { onDelete: "cascade" }),
+  nombre: varchar("nombre", { length: 100 }).notNull(),
+  unidadMedida: varchar("unidad_medida", { length: 20 }).notNull(), // 'gr', 'ml', 'unidades', etc.
+  costoUnitario: numeric("costo_unitario", { precision: 12, scale: 2 }).notNull().default("0.00"),
+  stockActual: numeric("stock_actual", { precision: 10, scale: 2 }).notNull().default("0.00"),
+  stockMinimo: numeric("stock_minimo", { precision: 10, scale: 2 }).default("0.00"), // Para alertas de stock
+  creadoEn: timestamp("creado_en", { withTimezone: true }).defaultNow(),
+});
+
+// 4. PRODUCTOS TERMINADOS
+export const productosSql = pgTable("productos", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  usuarioId: uuid("usuario_id").references(() => usuariosSql.id, { onDelete: "cascade" }),
+  nombre: varchar("nombre", { length: 100 }).notNull(),
+  descripcion: text("descripcion"),
+  precioVenta: numeric("precio_venta", { precision: 12, scale: 2 }).notNull().default("0.00"),
+  costoCalculado: numeric("costo_calculado", { precision: 12, scale: 2 }).default("0.00"), // Suma del costo de sus insumos
+  stockActual: integer("stock_actual").notNull().default(0),
+  stockMinimo: integer("stock_minimo").default(0), // Alerta de stock crítico
+  esFabricado: boolean("es_fabricado").default(true),
+  creadoEn: timestamp("creado_en", { withTimezone: true }).defaultNow(),
+});
+
+// 5. RECETAS / FABRICACIÓN POR LOTES (Relación Producto <-> Insumo)
+export const recetasFabricacionSql = pgTable("recetas_fabricacion", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  productoId: uuid("producto_id").references(() => productosSql.id, { onDelete: "cascade" }),
+  insumoId: uuid("insumo_id").references(() => insumosSql.id, { onDelete: "restrict" }),
+  cantidadRequerida: numeric("cantidad_requerida", { precision: 10, scale: 2 }).notNull(), // Cantidad de insumo por 1 producto
+}, (t) => [
+  unique().on(t.productoId, t.insumoId),
+]);
+
+// 6. VENTAS
+export const ventasSql = pgTable("ventas", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  usuarioId: uuid("usuario_id").references(() => usuariosSql.id, { onDelete: "cascade" }),
+  clienteId: uuid("cliente_id").references(() => clientesSql.id, { onDelete: "set null" }),
+  total: numeric("total", { precision: 12, scale: 2 }).notNull(),
+  gananciaNeta: numeric("ganancia_neta", { precision: 12, scale: 2 }).notNull(), // (Total Venta - Costo Total)
+  metodoPago: varchar("metodo_pago", { length: 50 }).default("Efectivo"), // 'Efectivo', 'Transferencia', etc.
+  estado: varchar("estado", { length: 20 }).default("completada"),   // 'completada', 'pendiente', 'cancelada'
+  fecha: timestamp("fecha", { withTimezone: true }).defaultNow(),
+});
+
+// 7. DETALLE DE VENTAS
+export const detallesVentaSql = pgTable("detalles_venta", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  ventaId: uuid("venta_id").references(() => ventasSql.id, { onDelete: "cascade" }),
+  productoId: uuid("producto_id").references(() => productosSql.id, { onDelete: "restrict" }),
+  cantidad: integer("cantidad").notNull(),
+  precioUnitario: numeric("precio_unitario", { precision: 12, scale: 2 }).notNull(),
+  subtotal: numeric("subtotal", { precision: 12, scale: 2 }).notNull(),
+});
+
+// 8. GASTOS GENERALES Y OPERATIVOS (Punto de Equilibrio)
+export const gastosSql = pgTable("gastos", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  usuarioId: uuid("usuario_id").references(() => usuariosSql.id, { onDelete: "cascade" }),
+  concepto: varchar("concepto", { length: 150 }).notNull(),
+  categoria: varchar("categoria", { length: 50 }).notNull(), // 'Fijo' (Alquiler, Luz) o 'Variable'
+  monto: numeric("monto", { precision: 12, scale: 2 }).notNull(),
+  fecha: date("fecha").defaultNow(),
+  creadoEn: timestamp("creado_en", { withTimezone: true }).defaultNow(),
+});
+
+// 9. HISTORIAL DE MOVIMIENTOS DE INVENTARIO
+export const movimientosInventarioSql = pgTable("movimientos_inventario", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  usuarioId: uuid("usuario_id").references(() => usuariosSql.id, { onDelete: "cascade" }),
+  tipoItem: varchar("tipo_item", { length: 20 }).notNull(), // 'producto' o 'insumo'
+  itemId: uuid("item_id").notNull(),
+  tipoMovimiento: varchar("tipo_movimiento", { length: 20 }).notNull(), // 'entrada', 'salida', 'fabricacion', 'ajuste'
+  cantidad: numeric("cantidad", { precision: 10, scale: 2 }).notNull(),
+  motivo: text("motivo"),
+  fecha: timestamp("fecha", { withTimezone: true }).defaultNow(),
+});
