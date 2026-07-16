@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Client } from "../types.ts";
 import { apiService } from "../lib/api.ts";
-import { MapPin, Phone, Mail, Navigation, Trash2, Plus, ArrowRight, Compass } from "lucide-react";
+import { MapPin, Phone, Mail, Navigation, Trash2, Plus, ArrowRight, Compass, Search } from "lucide-react";
 
 interface MapaClientesProps {
   clients: Client[];
@@ -25,6 +25,8 @@ export default function MapaClientes({ clients, onClientAdded, onClientDeleted }
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
   const [successMsg, setSuccessMsg] = useState("");
+  const [searchTerm, setSearchTerm] = useState("");
+  const [selectedClient, setSelectedClient] = useState<Client | null>(null);
 
   // Default coordinate center (e.g. Buenos Aires center)
   const defaultCenter: [number, number] = [-34.6037, -58.3816];
@@ -139,6 +141,7 @@ export default function MapaClientes({ clients, onClientAdded, onClientDeleted }
 
   // Handle fly to client
   const handleFlyTo = (client: Client) => {
+    setSelectedClient(client);
     if (client.lat && client.lng && mapRef.current) {
       mapRef.current.flyTo([client.lat, client.lng], 15, {
         animate: true,
@@ -421,6 +424,128 @@ export default function MapaClientes({ clients, onClientAdded, onClientDeleted }
             )}
           </div>
         </div>
+      </div>
+
+      {/* Client Information & Search Directory Table */}
+      <div className="lg:col-span-3 bg-white p-6 rounded-2xl border border-slate-100 shadow-sm mt-2">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-100 pb-4 mb-4">
+          <div>
+            <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
+              <span className="p-1.5 bg-indigo-50 text-indigo-700 rounded-lg">👤</span>
+              Datos Completos de los Clientes
+            </h2>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Consulta, filtra y gestiona la información detallada de contacto y geolocalización de tus clientes.
+            </p>
+          </div>
+          <div className="relative w-full md:w-80">
+            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+            <input
+              type="text"
+              placeholder="Buscar por nombre, teléfono o email..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full pl-10 pr-4 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+            />
+          </div>
+        </div>
+
+        {clients.filter(c => 
+          c.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+          (c.phone && c.phone.toLowerCase().includes(searchTerm.toLowerCase())) ||
+          (c.email && c.email.toLowerCase().includes(searchTerm.toLowerCase()))
+        ).length === 0 ? (
+          <div className="text-center py-12 text-slate-400 bg-slate-50/50 rounded-2xl border border-dashed border-slate-200">
+            <p className="text-sm font-semibold">No se encontraron clientes</p>
+            <p className="text-xs text-slate-400 mt-1">Intenta con otro término de búsqueda o registra un nuevo cliente arriba.</p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto rounded-xl border border-slate-150">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-slate-50 border-b border-slate-150 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                  <th className="px-4 py-3">Nombre / Razón Social</th>
+                  <th className="px-4 py-3">Teléfono</th>
+                  <th className="px-4 py-3">Correo Electrónico</th>
+                  <th className="px-4 py-3">Ubicación (Lat, Lng)</th>
+                  <th className="px-4 py-3 text-right">Acciones</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 text-xs text-slate-700">
+                {clients.filter(c => 
+                  c.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                  (c.phone && c.phone.toLowerCase().includes(searchTerm.toLowerCase())) ||
+                  (c.email && c.email.toLowerCase().includes(searchTerm.toLowerCase()))
+                ).map((client) => {
+                  const isSelected = selectedClient?.id === client.id;
+                  return (
+                    <tr
+                      key={client.id}
+                      onClick={() => handleFlyTo(client)}
+                      className={`hover:bg-slate-50/80 transition-colors cursor-pointer ${
+                        isSelected ? "bg-indigo-50/40 font-medium animate-pulse" : ""
+                      }`}
+                    >
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-2">
+                          <div className={`w-2 h-2 rounded-full ${isSelected ? "bg-indigo-600" : "bg-transparent"}`}></div>
+                          <span className="font-semibold text-slate-900">{client.name}</span>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 font-mono text-slate-600">
+                        {client.phone ? (
+                          <span className="flex items-center gap-1">
+                            <Phone className="w-3.5 h-3.5 text-slate-400" />
+                            {client.phone}
+                          </span>
+                        ) : (
+                          <span className="text-slate-300 italic">No especificado</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-slate-600">
+                        {client.email ? (
+                          <span className="flex items-center gap-1">
+                            <Mail className="w-3.5 h-3.5 text-slate-400" />
+                            {client.email}
+                          </span>
+                        ) : (
+                          <span className="text-slate-300 italic">No especificado</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 font-mono text-[11px] text-slate-500">
+                        {client.lat && client.lng ? (
+                          <span className="flex items-center gap-1.5">
+                            <MapPin className="w-3.5 h-3.5 text-indigo-500" />
+                            {client.lat.toFixed(5)}, {client.lng.toFixed(5)}
+                          </span>
+                        ) : (
+                          <span className="text-slate-300 italic">Sin georreferencia</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <div className="flex items-center justify-end gap-2" onClick={(e) => e.stopPropagation()}>
+                          <button
+                            onClick={() => handleFlyTo(client)}
+                            className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[10px] font-bold py-1 px-2.5 rounded-lg transition-all"
+                          >
+                            Centrar en Mapa
+                          </button>
+                          <button
+                            onClick={(e) => handleDeleteClient(client.id, e)}
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors"
+                            title="Eliminar Cliente"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
     </div>

@@ -68,23 +68,19 @@ export default function App() {
 
   const checkLocalData = () => {
     try {
-      const insKey = `es_biz_insumos_user_local-demo-user`;
-      const recKey = `es_biz_recipes_user_local-demo-user`;
-      const txKey = `es_biz_transactions_user_local-demo-user`;
-      const cliKey = `es_biz_clients_user_local-demo-user`;
-      
-      const hasIns = localStorage.getItem(insKey);
-      const hasRec = localStorage.getItem(recKey);
-      const hasTx = localStorage.getItem(txKey);
-      const hasCli = localStorage.getItem(cliKey);
-
-      if (hasIns || hasRec || hasTx || hasCli) {
-        setHasLocalDataToMigrate(true);
-      } else {
-        setHasLocalDataToMigrate(false);
-      }
+      const keys = [
+        "es_biz_insumos_user_local-demo-user",
+        "es_biz_recipes_user_local-demo-user",
+        "es_biz_products_user_local-demo-user",
+        "es_biz_transactions_user_local-demo-user",
+        "es_biz_clients_user_local-demo-user",
+        "es_biz_profile_user_local-demo-user"
+      ];
+      keys.forEach(key => localStorage.removeItem(key));
+      localStorage.setItem("es_biz_is_seeded_user_local-demo-user", "true");
+      setHasLocalDataToMigrate(false);
     } catch (e) {
-      console.warn("Could not check local storage for migration:", e);
+      console.warn("Could not check or clear local storage:", e);
     }
   };
 
@@ -619,10 +615,7 @@ export default function App() {
       <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4 font-sans selection:bg-indigo-600 selection:text-white">
         <div className="max-w-md w-full bg-white p-8 rounded-3xl border border-slate-100 shadow-2xl space-y-6 animate-in fade-in zoom-in-95">
           <div className="text-center">
-            <span className="bg-indigo-50 text-indigo-700 text-xs font-bold px-3 py-1 rounded-full border border-indigo-150 uppercase tracking-wider">
-              Sistema Multi-inquilino 100% Aislado
-            </span>
-            <h1 className="text-3xl font-extrabold text-slate-900 mt-4 font-display">FinanzasPro</h1>
+            <h1 className="text-3xl font-extrabold text-slate-900 font-display">FinanzasPro</h1>
             <p className="text-xs text-slate-400 mt-1">Gestor de Negocios Inteligente de Taller y Producción</p>
           </div>
 
@@ -764,7 +757,7 @@ export default function App() {
                 type="submit"
                 className="w-full bg-slate-950 hover:bg-slate-850 active:bg-black text-white font-bold py-3 px-4 rounded-xl text-xs shadow-md transition-all cursor-pointer"
               >
-                Crear Mi Cuenta & Base de Datos Aislada
+                Crear Mi Cuenta
               </button>
             </form>
           )}
@@ -820,29 +813,7 @@ export default function App() {
         </div>
       )}
 
-      {!isLocalMode && hasLocalDataToMigrate && (
-        <div className="bg-amber-50 text-amber-900 border-b border-amber-200 px-4 py-3 text-center text-xs font-semibold flex flex-col sm:flex-row items-center justify-center gap-3 animate-in fade-in slide-in-from-top-1">
-          <div className="flex items-center justify-center gap-2">
-            <CloudLightning className="w-4 h-4 text-amber-500 animate-pulse shrink-0" />
-            <span>⚠️ Se detectaron datos locales sin sincronizar (ventas, despensa de insumos, taller de fabricación, productos finales y georreferencia). ¿Deseas migrarlos a tu base de datos en la nube?</span>
-          </div>
-          <div className="flex items-center gap-2 justify-center">
-            <button
-              onClick={handleMigrateData}
-              disabled={isMigrating}
-              className="bg-amber-600 hover:bg-amber-700 active:bg-amber-800 text-white font-bold py-1 px-3.5 rounded-lg text-[10px] transition-all cursor-pointer uppercase tracking-wider shadow-xs disabled:opacity-50"
-            >
-              {isMigrating ? "Migrando..." : "📤 Migrar Datos"}
-            </button>
-            <button
-              onClick={handleDismissMigration}
-              className="text-amber-600 hover:text-amber-800 text-[10px] font-bold uppercase tracking-wider px-2 cursor-pointer"
-            >
-              Descartar
-            </button>
-          </div>
-        </div>
-      )}
+      {/* Removed migration banner according to user request */}
 
       {migrationSuccess && (
         <div className="bg-emerald-50 text-emerald-800 border-b border-emerald-200 px-4 py-3 text-center text-xs font-semibold flex items-center justify-center gap-2 animate-in fade-in slide-in-from-top-1">
@@ -982,7 +953,7 @@ export default function App() {
               className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer ${activeTab === "mapa" ? "bg-slate-900 text-white shadow" : "text-slate-500 hover:text-slate-800 hover:bg-slate-50"}`}
             >
               <MapPin className="w-3.5 h-3.5" />
-              Georreferencia
+              Mis Clientes
             </button>
 
           </div>
